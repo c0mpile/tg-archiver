@@ -7,12 +7,15 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
+pub mod filter_config;
+
 pub fn render(f: &mut Frame, app: &App) {
     match app.active_view {
         ActiveView::Home => render_home(f, app),
         ActiveView::ChannelSelect => render_input(f, app, "Select Source Channel"),
         ActiveView::GroupSelect => render_input(f, app, "Select Destination Group"),
         ActiveView::TopicSelect => render_topic_select(f, app),
+        ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
     }
 }
 
@@ -37,6 +40,7 @@ fn render_home(f: &mut Frame, app: &App) {
         2. Destination Group: {} (Topic: {})\n\n\
         Press '1' to set source channel.\n\
         Press '2' to set destination group & topic.\n\
+        Press '3' to configure filters & download path.\n\
         Press 'q' or Ctrl-C to quit.",
         channel_text, group_text, topic_text
     );

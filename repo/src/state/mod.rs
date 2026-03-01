@@ -40,6 +40,8 @@ pub struct Filters {
     pub min_size_bytes: u64,
     #[serde(default)]
     pub post_count_threshold: u32,
+    #[serde(default = "default_true")]
+    pub include_text_descriptions: bool,
 }
 
 impl Default for Filters {
@@ -51,6 +53,7 @@ impl Default for Filters {
             filter_archive: true,
             min_size_bytes: 0,
             post_count_threshold: 0,
+            include_text_descriptions: true,
         }
     }
 }

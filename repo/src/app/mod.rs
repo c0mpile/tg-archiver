@@ -10,6 +10,16 @@ pub enum AppEvent {
     ChannelResolved(Result<(i64, String), String>),
     GroupResolved(Result<(i64, String), String>),
     TopicsLoaded(Result<Vec<(i32, String)>, String>),
+    FilterConfigNextField,
+    FilterConfigPrevField,
+    ToggleFilter(FilterConfigField),
+    BeginEditField,
+    TypeFilterChar(char),
+    BackspaceFilterChar,
+    EndEditField,
+    CancelEditField,
+    ExitFilterConfig,
+    SaveFilterConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -19,6 +29,65 @@ pub enum ActiveView {
     ChannelSelect,
     GroupSelect,
     TopicSelect,
+    FilterConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum FilterConfigField {
+    #[default]
+    Video,
+    Audio,
+    Image,
+    Archive,
+    IncludeText,
+    MinSize,
+    PostCount,
+    DownloadPath,
+    Save, // Button to confirm and exit
+}
+
+impl FilterConfigField {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Video => Self::Audio,
+            Self::Audio => Self::Image,
+            Self::Image => Self::Archive,
+            Self::Archive => Self::IncludeText,
+            Self::IncludeText => Self::MinSize,
+            Self::MinSize => Self::PostCount,
+            Self::PostCount => Self::DownloadPath,
+            Self::DownloadPath => Self::Save,
+            Self::Save => Self::Save,
+        }
+    }
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Video => Self::Video,
+            Self::Audio => Self::Video,
+            Self::Image => Self::Audio,
+            Self::Archive => Self::Image,
+            Self::IncludeText => Self::Archive,
+            Self::MinSize => Self::IncludeText,
+            Self::PostCount => Self::MinSize,
+            Self::DownloadPath => Self::PostCount,
+            Self::Save => Self::DownloadPath,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FilterConfigState {
+    pub selected_field: FilterConfigField,
+    pub filter_video: bool,
+    pub filter_audio: bool,
+    pub filter_image: bool,
+    pub filter_archive: bool,
+    pub include_text_descriptions: bool,
+    pub min_size_mb: String,
+    pub post_count_threshold: String,
+    pub local_download_path: String,
+    pub editing: bool,
+    pub error_message: Option<String>,
 }
 
 pub struct App {
@@ -31,6 +100,7 @@ pub struct App {
     pub resolution_error: Option<String>,
     pub available_topics: Vec<(i32, String)>,
     pub selected_topic_index: usize,
+    pub filter_config_state: FilterConfigState,
 }
 
 impl App {
@@ -44,6 +114,7 @@ impl App {
             resolution_error: None,
             available_topics: Vec::new(),
             selected_topic_index: 0,
+            filter_config_state: FilterConfigState::default(),
         }
     }
 
@@ -81,6 +152,30 @@ impl App {
                         }
                         crossterm::event::KeyCode::Char('2') => {
                             self.active_view = ActiveView::GroupSelect
+                        }
+                        crossterm::event::KeyCode::Char('3') => {
+                            self.active_view = ActiveView::FilterConfig;
+                            self.filter_config_state = FilterConfigState {
+                                selected_field: FilterConfigField::Video,
+                                filter_video: self.state.filters.filter_video,
+                                filter_audio: self.state.filters.filter_audio,
+                                filter_image: self.state.filters.filter_image,
+                                filter_archive: self.state.filters.filter_archive,
+                                include_text_descriptions: self
+                                    .state
+                                    .filters
+                                    .include_text_descriptions,
+                                min_size_mb: (self.state.filters.min_size_bytes / 1024 / 1024)
+                                    .to_string(),
+                                post_count_threshold: self
+                                    .state
+                                    .filters
+                                    .post_count_threshold
+                                    .to_string(),
+                                local_download_path: self.state.local_download_path.clone(),
+                                editing: false,
+                                error_message: None,
+                            };
                         }
                         crossterm::event::KeyCode::Char('c')
                             if key
@@ -197,6 +292,62 @@ impl App {
                         }
                         _ => {}
                     },
+                    ActiveView::FilterConfig => {
+                        let tx = tx.clone();
+                        let st = &self.filter_config_state;
+                        // Handle input based on editing mode
+                        if st.editing {
+                            match key.code {
+                                crossterm::event::KeyCode::Char(c) => {
+                                    let _ = tx.try_send(AppEvent::TypeFilterChar(c));
+                                }
+                                crossterm::event::KeyCode::Backspace => {
+                                    let _ = tx.try_send(AppEvent::BackspaceFilterChar);
+                                }
+                                crossterm::event::KeyCode::Enter => {
+                                    let _ = tx.try_send(AppEvent::EndEditField);
+                                }
+                                crossterm::event::KeyCode::Esc => {
+                                    let _ = tx.try_send(AppEvent::CancelEditField);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                crossterm::event::KeyCode::Down
+                                | crossterm::event::KeyCode::Char('j') => {
+                                    let _ = tx.try_send(AppEvent::FilterConfigNextField);
+                                }
+                                crossterm::event::KeyCode::Up
+                                | crossterm::event::KeyCode::Char('k') => {
+                                    let _ = tx.try_send(AppEvent::FilterConfigPrevField);
+                                }
+                                crossterm::event::KeyCode::Esc => {
+                                    let _ = tx.try_send(AppEvent::ExitFilterConfig);
+                                }
+                                crossterm::event::KeyCode::Enter => match st.selected_field {
+                                    FilterConfigField::Video
+                                    | FilterConfigField::Audio
+                                    | FilterConfigField::Image
+                                    | FilterConfigField::Archive
+                                    | FilterConfigField::IncludeText => {
+                                        let _ = tx.try_send(AppEvent::ToggleFilter(
+                                            st.selected_field.clone(),
+                                        ));
+                                    }
+                                    FilterConfigField::MinSize
+                                    | FilterConfigField::PostCount
+                                    | FilterConfigField::DownloadPath => {
+                                        let _ = tx.try_send(AppEvent::BeginEditField);
+                                    }
+                                    FilterConfigField::Save => {
+                                        let _ = tx.try_send(AppEvent::SaveFilterConfig);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
                 }
             }
             AppEvent::Tick => {}
@@ -242,6 +393,109 @@ impl App {
                     self.resolution_error = Some(err);
                 }
             },
+            AppEvent::FilterConfigNextField => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                st.selected_field = st.selected_field.next();
+            }
+            AppEvent::FilterConfigPrevField => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                st.selected_field = st.selected_field.prev();
+            }
+            AppEvent::ToggleFilter(field) => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                match field {
+                    FilterConfigField::Video => st.filter_video = !st.filter_video,
+                    FilterConfigField::Audio => st.filter_audio = !st.filter_audio,
+                    FilterConfigField::Image => st.filter_image = !st.filter_image,
+                    FilterConfigField::Archive => st.filter_archive = !st.filter_archive,
+                    FilterConfigField::IncludeText => {
+                        st.include_text_descriptions = !st.include_text_descriptions
+                    }
+                    _ => {}
+                }
+            }
+            AppEvent::BeginEditField => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                st.editing = true;
+            }
+            AppEvent::TypeFilterChar(c) => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                match st.selected_field {
+                    FilterConfigField::MinSize => {
+                        if c.is_ascii_digit() {
+                            st.min_size_mb.push(c);
+                        }
+                    }
+                    FilterConfigField::PostCount => {
+                        if c.is_ascii_digit() {
+                            st.post_count_threshold.push(c);
+                        }
+                    }
+                    FilterConfigField::DownloadPath => {
+                        st.local_download_path.push(c);
+                    }
+                    _ => {}
+                }
+            }
+            AppEvent::BackspaceFilterChar => {
+                let st = &mut self.filter_config_state;
+                st.error_message = None;
+                match st.selected_field {
+                    FilterConfigField::MinSize => {
+                        st.min_size_mb.pop();
+                    }
+                    FilterConfigField::PostCount => {
+                        st.post_count_threshold.pop();
+                    }
+                    FilterConfigField::DownloadPath => {
+                        st.local_download_path.pop();
+                    }
+                    _ => {}
+                }
+            }
+            AppEvent::EndEditField | AppEvent::CancelEditField => {
+                let st = &mut self.filter_config_state;
+                st.editing = false;
+            }
+            AppEvent::ExitFilterConfig => {
+                self.active_view = ActiveView::Home;
+            }
+            AppEvent::SaveFilterConfig => {
+                let st = &mut self.filter_config_state;
+                let mb_res = st.min_size_mb.parse::<u64>();
+                let count_res = st.post_count_threshold.parse::<u32>();
+
+                if mb_res.is_err() {
+                    st.error_message = Some("Min Size must be a valid number.".to_string());
+                    return;
+                }
+
+                if count_res.is_err() {
+                    st.error_message = Some("Post Count must be a valid number.".to_string());
+                    return;
+                }
+
+                self.state.filters.filter_video = st.filter_video;
+                self.state.filters.filter_audio = st.filter_audio;
+                self.state.filters.filter_image = st.filter_image;
+                self.state.filters.filter_archive = st.filter_archive;
+                self.state.filters.include_text_descriptions = st.include_text_descriptions;
+
+                self.state.filters.min_size_bytes = mb_res.unwrap() * 1024 * 1024;
+                self.state.filters.post_count_threshold = count_res.unwrap();
+                self.state.local_download_path = st.local_download_path.clone();
+
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+                self.active_view = ActiveView::Home;
+            }
         }
     }
 }
