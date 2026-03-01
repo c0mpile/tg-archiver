@@ -13,6 +13,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -49,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialise Telegram client and perform auth if necessary
     // This happens before TUI setup to avoid conflicts with raw terminal mode
-    let _telegram_client = telegram::TelegramClient::init().await?;
+    let telegram_client = Arc::new(telegram::TelegramClient::init().await?);
 
     // Set up terminal
 
@@ -59,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let app_result = run_app(app, &mut terminal).await;
+    let app_result = run_app(app, &mut terminal, telegram_client).await;
 
     // Guaranteed cleanup
     disable_raw_mode()?;
@@ -78,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
 async fn run_app(
     mut app: App,
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    telegram_client: Arc<crate::telegram::TelegramClient>,
 ) -> anyhow::Result<()> {
     let (tx, mut rx) = mpsc::channel(128);
     let tick_rate = Duration::from_millis(250);
@@ -111,7 +113,7 @@ async fn run_app(
         terminal.draw(|f| tui::render(f, &app))?;
 
         if let Some(event) = rx.recv().await {
-            app.handle_event(event);
+            app.handle_event(event, &telegram_client, &tx);
         }
 
         if app.should_quit() {
