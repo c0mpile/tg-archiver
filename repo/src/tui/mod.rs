@@ -7,8 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-pub mod filter_config;
 pub mod archive_progress;
+pub mod filter_config;
 
 pub fn render(f: &mut Frame, app: &App) {
     match app.active_view {

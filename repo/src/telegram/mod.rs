@@ -105,7 +105,10 @@ impl TelegramClient {
         })
     }
 
-    pub async fn get_input_peer(&self, peer_id: i64) -> Option<grammers_tl_types::enums::InputPeer> {
+    pub async fn get_input_peer(
+        &self,
+        peer_id: i64,
+    ) -> Option<grammers_tl_types::enums::InputPeer> {
         self.peer_cache.read().await.get(&peer_id).cloned()
     }
 
@@ -236,6 +239,35 @@ impl TelegramClient {
             .await
             .insert(group_id, topics.clone());
         Ok(topics)
+    }
+
+    pub async fn get_media_description(
+        &self,
+        peer: &grammers_tl_types::enums::InputPeer,
+        msg_id: i32,
+        msg_text: &str,
+    ) -> Result<Option<String>> {
+        if !msg_text.trim().is_empty() {
+            return Ok(Some(msg_text.trim().to_string()));
+        }
+
+        let mut count = 0;
+        let mut iter = self.client.iter_messages(peer.clone()).offset_id(msg_id);
+
+        while let Some(prev_msg) = crate::retry_flood_wait!(iter.next())? {
+            count += 1;
+            if count > 3 {
+                break;
+            }
+            if prev_msg.media().is_none() {
+                let txt = prev_msg.text();
+                if !txt.trim().is_empty() {
+                    return Ok(Some(txt.trim().to_string()));
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 

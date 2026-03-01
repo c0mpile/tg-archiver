@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
 use crate::app::App;
@@ -31,10 +31,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Active Downloads
     let mut items = Vec::new();
     let statuses = &app.state.download_status;
-    
+
     // We only show a limited number. The user plan said:
     // Render overall progress and list of active downloads with statuses
-    
+
     let mut in_progress = 0;
     let mut completed = 0;
     let mut failed = 0;
@@ -45,11 +45,14 @@ pub fn draw(f: &mut Frame, app: &App) {
             DownloadStatus::InProgress { bytes_received } => {
                 in_progress += 1;
                 items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("Msg {}: ", msg_id), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("Msg {}: ", msg_id),
+                        Style::default().fg(Color::Yellow),
+                    ),
                     Span::raw(format!("Downloading... {} bytes", bytes_received)),
                 ])));
             }
-            DownloadStatus::Complete => completed += 1,
+            DownloadStatus::Complete { .. } => completed += 1,
             DownloadStatus::Failed { reason } => {
                 failed += 1;
                 items.push(ListItem::new(Line::from(vec![
@@ -62,10 +65,13 @@ pub fn draw(f: &mut Frame, app: &App) {
         }
     }
 
-    let active_list = List::new(items)
-        .block(Block::default().title("Active Downloads & Errors").borders(Borders::ALL));
+    let active_list = List::new(items).block(
+        Block::default()
+            .title("Active Downloads & Errors")
+            .borders(Borders::ALL),
+    );
     f.render_widget(active_list, chunks[1]);
-    
+
     // Summary Footer
     let summary = format!(
         "Processed messages: {} | Completed: {} | Skipped: {} | Failed: {} | Active: {}",

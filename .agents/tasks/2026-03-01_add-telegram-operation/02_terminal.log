@@ -1,0 +1,5 @@
+$ cargo fmt
+$ cargo clippy -- -D warnings
+$ cargo build --release
+$ cargo test
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s

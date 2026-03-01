@@ -128,13 +128,9 @@ impl App {
         }
     }
 
-
-
     pub fn state(&self) -> &State {
         &self.state
     }
-
-
 
     pub fn should_quit(&self) -> bool {
         self.should_quit
@@ -182,7 +178,9 @@ impl App {
                             };
                         }
                         crossterm::event::KeyCode::Char('s') => {
-                            if self.state.local_download_path == "/tmp" || self.state.local_download_path.starts_with("/tmp/") {
+                            if self.state.local_download_path == "/tmp"
+                                || self.state.local_download_path.starts_with("/tmp/")
+                            {
                                 self.active_view = ActiveView::ConfirmDownloadPath;
                             } else {
                                 let tx = tx.clone();
@@ -359,25 +357,27 @@ impl App {
                                 _ => {}
                             }
                         }
-                    },
-                    ActiveView::ConfirmDownloadPath => {
-                        match key.code {
-                            crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') | crossterm::event::KeyCode::Enter => {
-                                let tx = tx.clone();
-                                let _ = tx.try_send(AppEvent::StartArchiveRun);
-                            }
-                            crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('N') | crossterm::event::KeyCode::Esc => {
-                                self.active_view = ActiveView::Home;
-                            }
-                            crossterm::event::KeyCode::Char('c')
-                                if key
-                                    .modifiers
-                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                            {
-                                self.should_quit = true;
-                            }
-                            _ => {}
+                    }
+                    ActiveView::ConfirmDownloadPath => match key.code {
+                        crossterm::event::KeyCode::Char('y')
+                        | crossterm::event::KeyCode::Char('Y')
+                        | crossterm::event::KeyCode::Enter => {
+                            let tx = tx.clone();
+                            let _ = tx.try_send(AppEvent::StartArchiveRun);
                         }
+                        crossterm::event::KeyCode::Char('n')
+                        | crossterm::event::KeyCode::Char('N')
+                        | crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Home;
+                        }
+                        crossterm::event::KeyCode::Char('c')
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
+                            self.should_quit = true;
+                        }
+                        _ => {}
                     },
                     ActiveView::ArchiveProgress => {
                         // TODO: handle user input for archive progress
@@ -532,7 +532,11 @@ impl App {
             }
             AppEvent::StartArchiveRun => {
                 self.active_view = ActiveView::ArchiveProgress;
-                crate::archive::start_archive_run(self.state.clone(), Arc::clone(telegram), tx.clone());
+                crate::archive::start_archive_run(
+                    self.state.clone(),
+                    Arc::clone(telegram),
+                    tx.clone(),
+                );
             }
             AppEvent::DownloadProgress { msg_id, status } => {
                 self.state.download_status.insert(msg_id, status);

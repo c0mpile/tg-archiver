@@ -66,9 +66,16 @@ fn default_true() -> bool {
 #[serde(tag = "status")]
 pub enum DownloadStatus {
     Pending,
-    InProgress { bytes_received: u64 },
-    Complete,
-    Failed { reason: String },
+    InProgress {
+        bytes_received: u64,
+    },
+    Complete {
+        #[serde(default)]
+        caption: Option<String>,
+    },
+    Failed {
+        reason: String,
+    },
     Skipped,
 }
 
