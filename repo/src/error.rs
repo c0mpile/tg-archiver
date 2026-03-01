@@ -4,4 +4,13 @@
 pub enum AppError {
     #[error("Application error: {0}")]
     General(String),
+
+    #[error("Telegram FloodWait for {0:?}")]
+    FloodWait(std::time::Duration),
+
+    #[error("Authentication required")]
+    AuthRequired,
+
+    #[error("Session expired")]
+    SessionExpired,
 }

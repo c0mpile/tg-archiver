@@ -47,7 +47,12 @@ async fn main() -> anyhow::Result<()> {
 
     let app = App::new(config, state);
 
+    // Initialise Telegram client and perform auth if necessary
+    // This happens before TUI setup to avoid conflicts with raw terminal mode
+    let _telegram_client = telegram::TelegramClient::init().await?;
+
     // Set up terminal
+
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;

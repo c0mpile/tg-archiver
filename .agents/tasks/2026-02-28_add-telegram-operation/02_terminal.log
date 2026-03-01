@@ -1,0 +1,4 @@
+cargo build --release   # success
+cargo check             # success 
+cargo clippy -- -D warnings # success
+cargo test              # success
