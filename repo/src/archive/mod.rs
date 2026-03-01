@@ -1,5 +1,5 @@
 use crate::app::AppEvent;
-use crate::state::{DownloadStatus, State};
+use crate::state::State;
 use crate::telegram::TelegramClient;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
@@ -60,7 +60,29 @@ async fn run_archive_loop(
         if should_download(&msg, &state.filters) {
             // Check if already processed
             let status = state.download_status.get(&msg_id);
-            if !matches!(status, Some(&DownloadStatus::Complete { .. })) {
+            let mut needs_download = true;
+            let mut existing_caption = None;
+
+            match status {
+                Some(crate::state::DownloadStatus::Uploaded) => needs_download = false,
+                Some(crate::state::DownloadStatus::Complete { caption }) => {
+                    needs_download = false;
+                    existing_caption = caption.clone();
+                }
+                Some(crate::state::DownloadStatus::Skipped) => needs_download = false,
+                _ => {}
+            }
+
+            let dest_group_id = state.dest_group_id;
+            let dest_topic_id = state.dest_topic_id;
+            let needs_upload = dest_group_id.is_some()
+                && !matches!(
+                    status,
+                    Some(crate::state::DownloadStatus::Uploaded)
+                        | Some(crate::state::DownloadStatus::Skipped)
+                );
+
+            if needs_download || needs_upload {
                 // Spawn worker
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
                 let tx_clone = tx.clone();
@@ -193,38 +215,89 @@ async fn run_archive_loop(
                         }
                     }
 
-                    let mut description = None;
-                    if include_descriptions {
-                        match telegram_client_clone
-                            .get_media_description(&input_peer_clone, msg_id, &msg_text)
-                            .await
-                        {
-                            Ok(Some(desc)) => {
-                                let dot_idx = filename.rfind('.').unwrap_or(filename.len());
-                                let txt_filename = format!("{}.txt", &filename[..dot_idx]);
-                                let txt_path = format!("{}/{}", local_download_path, txt_filename);
-                                if let Err(e) = tokio::fs::write(&txt_path, &desc).await {
+                    let mut description = existing_caption;
+
+                    if needs_download {
+                        if include_descriptions {
+                            match telegram_client_clone
+                                .get_media_description(&input_peer_clone, msg_id, &msg_text)
+                                .await
+                            {
+                                Ok(Some(desc)) => {
+                                    let dot_idx = filename.rfind('.').unwrap_or(filename.len());
+                                    let txt_filename = format!("{}.txt", &filename[..dot_idx]);
+                                    let txt_path =
+                                        format!("{}/{}", local_download_path, txt_filename);
+                                    if let Err(e) = tokio::fs::write(&txt_path, &desc).await {
+                                        let _ = tx_clone.try_send(
+                                            crate::app::AppEvent::ArchiveError(format!(
+                                                "Failed to save description for {}: {}",
+                                                msg_id, e
+                                            )),
+                                        );
+                                    }
+                                    description = Some(desc);
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
                                     let _ = tx_clone.try_send(crate::app::AppEvent::ArchiveError(
-                                        format!("Failed to save description for {}: {}", msg_id, e),
+                                        format!(
+                                            "Failed to fetch description for {}: {}",
+                                            msg_id, e
+                                        ),
                                     ));
                                 }
-                                description = Some(desc);
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                let _ = tx_clone.try_send(crate::app::AppEvent::ArchiveError(
-                                    format!("Failed to fetch description for {}: {}", msg_id, e),
-                                ));
                             }
                         }
+
+                        let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                            msg_id,
+                            status: crate::state::DownloadStatus::Complete {
+                                caption: description.clone(),
+                            },
+                        });
                     }
 
-                    let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
-                        msg_id,
-                        status: crate::state::DownloadStatus::Complete {
-                            caption: description,
-                        },
-                    });
+                    if needs_upload && let Some(group_id) = dest_group_id {
+                        if let Some(dest_peer) =
+                            telegram_client_clone.get_input_peer(group_id).await
+                        {
+                            match telegram_client_clone
+                                .upload_media(
+                                    &file_path,
+                                    &dest_peer,
+                                    dest_topic_id,
+                                    description,
+                                    is_photo,
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    let _ =
+                                        tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                                            msg_id,
+                                            status: crate::state::DownloadStatus::Uploaded,
+                                        });
+                                }
+                                Err(e) => {
+                                    let _ =
+                                        tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                                            msg_id,
+                                            status: crate::state::DownloadStatus::Failed {
+                                                reason: e.to_string(),
+                                            },
+                                        });
+                                }
+                            }
+                        } else {
+                            let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                                msg_id,
+                                status: crate::state::DownloadStatus::Failed {
+                                    reason: "Destination peer not found in cache".into(),
+                                },
+                            });
+                        }
+                    }
 
                     drop(permit);
                 });

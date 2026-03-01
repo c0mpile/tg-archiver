@@ -73,6 +73,7 @@ pub enum DownloadStatus {
         #[serde(default)]
         caption: Option<String>,
     },
+    Uploaded,
     Failed {
         reason: String,
     },

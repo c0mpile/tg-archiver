@@ -269,6 +269,40 @@ impl TelegramClient {
 
         Ok(None)
     }
+
+    pub async fn upload_media(
+        &self,
+        file_path: &str,
+        peer: &grammers_tl_types::enums::InputPeer,
+        topic_id: Option<i32>,
+        caption: Option<String>,
+        is_photo: bool,
+    ) -> Result<()> {
+        let uploaded = crate::retry_flood_wait!(self.client.upload_file(file_path))
+            .context("Failed to upload file")?;
+
+        let mut msg = grammers_client::message::InputMessage::new();
+        if let Some(text) = caption
+            && !text.trim().is_empty()
+        {
+            msg = msg.text(text);
+        }
+
+        if is_photo {
+            msg = msg.photo(uploaded);
+        } else {
+            msg = msg.document(uploaded);
+        }
+
+        if let Some(tid) = topic_id {
+            msg = msg.reply_to(Some(tid));
+        }
+
+        crate::retry_flood_wait!(self.client.send_message(peer.clone(), msg.clone()))
+            .context("Failed to send uploaded media to topic")?;
+
+        Ok(())
+    }
 }
 
 /// Helper macro to handle `FloodWait` errors by retrying once.
@@ -281,25 +315,42 @@ macro_rules! retry_flood_wait {
             match $client_call.await {
                 Ok(val) => break Ok(val),
                 Err(e) => {
-                    if let grammers_mtsender::InvocationError::Rpc(rpc_error) = &e {
+                    let err = anyhow::anyhow!(e);
+                    let mut is_flood = false;
+                    let mut wait_sec = 0;
+                    if let Some(grammers_mtsender::InvocationError::Rpc(rpc_error)) =
+                        err.downcast_ref::<grammers_mtsender::InvocationError>()
+                    {
                         if rpc_error.name == "FLOOD_WAIT" {
-                            if retried {
-                                break Err($crate::error::AppError::FloodWait(
-                                    std::time::Duration::from_secs(
-                                        rpc_error.value.unwrap_or(0) as u64
-                                    ),
-                                )
-                                .into());
+                            is_flood = true;
+                            wait_sec = rpc_error.value.unwrap_or(0) as u64;
+                        }
+                    } else if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+                        if let Some(inner) = io_err.get_ref() {
+                            if let Some(grammers_mtsender::InvocationError::Rpc(rpc_error)) =
+                                inner.downcast_ref::<grammers_mtsender::InvocationError>()
+                            {
+                                if rpc_error.name == "FLOOD_WAIT" {
+                                    is_flood = true;
+                                    wait_sec = rpc_error.value.unwrap_or(0) as u64;
+                                }
                             }
-                            let wait_seconds = rpc_error.value.unwrap_or(0) as u64;
-                            let delay = wait_seconds + 2; // adding 2 seconds buffer
-                            tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
-                            retried = true;
-                            continue;
                         }
                     }
-                    // For any other error, return it
-                    break Err(anyhow::anyhow!(e));
+
+                    if is_flood {
+                        if retried {
+                            break Err(anyhow::anyhow!($crate::error::AppError::FloodWait(
+                                std::time::Duration::from_secs(wait_sec)
+                            )));
+                        }
+                        let delay = wait_sec + 2;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+                        retried = true;
+                        continue;
+                    }
+
+                    break Err(err);
                 }
             }
         }

@@ -53,6 +53,7 @@ pub fn draw(f: &mut Frame, app: &App) {
                 ])));
             }
             DownloadStatus::Complete { .. } => completed += 1,
+            DownloadStatus::Uploaded => completed += 1,
             DownloadStatus::Failed { reason } => {
                 failed += 1;
                 items.push(ListItem::new(Line::from(vec![
