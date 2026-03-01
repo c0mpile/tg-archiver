@@ -20,6 +20,14 @@ pub enum AppEvent {
     CancelEditField,
     ExitFilterConfig,
     SaveFilterConfig,
+    StartArchiveRun,
+    DownloadProgress {
+        msg_id: i32,
+        status: crate::state::DownloadStatus,
+    },
+    ArchiveComplete,
+    ArchiveError(String),
+    SaveCursor(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -30,6 +38,8 @@ pub enum ActiveView {
     GroupSelect,
     TopicSelect,
     FilterConfig,
+    ConfirmDownloadPath,
+    ArchiveProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -118,19 +128,13 @@ impl App {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
+
 
     pub fn state(&self) -> &State {
         &self.state
     }
 
-    #[allow(dead_code)]
-    pub fn state_mut(&mut self) -> &mut State {
-        &mut self.state
-    }
+
 
     pub fn should_quit(&self) -> bool {
         self.should_quit
@@ -176,6 +180,14 @@ impl App {
                                 editing: false,
                                 error_message: None,
                             };
+                        }
+                        crossterm::event::KeyCode::Char('s') => {
+                            if self.state.local_download_path == "/tmp" || self.state.local_download_path.starts_with("/tmp/") {
+                                self.active_view = ActiveView::ConfirmDownloadPath;
+                            } else {
+                                let tx = tx.clone();
+                                let _ = tx.try_send(AppEvent::StartArchiveRun);
+                            }
                         }
                         crossterm::event::KeyCode::Char('c')
                             if key
@@ -347,6 +359,28 @@ impl App {
                                 _ => {}
                             }
                         }
+                    },
+                    ActiveView::ConfirmDownloadPath => {
+                        match key.code {
+                            crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') | crossterm::event::KeyCode::Enter => {
+                                let tx = tx.clone();
+                                let _ = tx.try_send(AppEvent::StartArchiveRun);
+                            }
+                            crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('N') | crossterm::event::KeyCode::Esc => {
+                                self.active_view = ActiveView::Home;
+                            }
+                            crossterm::event::KeyCode::Char('c')
+                                if key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                            {
+                                self.should_quit = true;
+                            }
+                            _ => {}
+                        }
+                    },
+                    ActiveView::ArchiveProgress => {
+                        // TODO: handle user input for archive progress
                     }
                 }
             }
@@ -495,6 +529,37 @@ impl App {
                     let _ = state_clone.save().await;
                 });
                 self.active_view = ActiveView::Home;
+            }
+            AppEvent::StartArchiveRun => {
+                self.active_view = ActiveView::ArchiveProgress;
+                crate::archive::start_archive_run(self.state.clone(), Arc::clone(telegram), tx.clone());
+            }
+            AppEvent::DownloadProgress { msg_id, status } => {
+                self.state.download_status.insert(msg_id, status);
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+            }
+            AppEvent::SaveCursor(cursor) => {
+                self.state.message_cursor = Some(cursor);
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+            }
+            AppEvent::ArchiveComplete => {
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+            }
+            AppEvent::ArchiveError(err) => {
+                self.resolution_error = Some(err);
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
             }
         }
     }

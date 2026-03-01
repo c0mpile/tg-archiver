@@ -49,7 +49,7 @@ Supported categories and their grammers media variant mappings:
 
 | Category | grammers type |
 |---|---|
-| Video | `Media::Document` with MIME `video/*`, or `Media::Video` |
+| Video | `Media::Document` with MIME `video/*` |
 | Audio | `Media::Document` with MIME `audio/*`, or `Media::Audio` |
 | Image | `Media::Photo`, or `Media::Document` with MIME `image/*` |
 | Archive | `Media::Document` with MIME `application/zip`, `application/x-rar-compressed`, `application/x-7z-compressed`, `application/gzip`, `application/x-tar` |

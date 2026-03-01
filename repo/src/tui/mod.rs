@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 pub mod filter_config;
+pub mod archive_progress;
 
 pub fn render(f: &mut Frame, app: &App) {
     match app.active_view {
@@ -16,6 +17,8 @@ pub fn render(f: &mut Frame, app: &App) {
         ActiveView::GroupSelect => render_input(f, app, "Select Destination Group"),
         ActiveView::TopicSelect => render_topic_select(f, app),
         ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
+        ActiveView::ConfirmDownloadPath => render_confirm_download_path(f, app),
+        ActiveView::ArchiveProgress => archive_progress::draw(f, app),
     }
 }
 
@@ -136,4 +139,26 @@ fn render_topic_select(f: &mut Frame, app: &App) {
         Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
             .style(Style::default().fg(Color::DarkGray));
     f.render_widget(help_text, chunks[1]);
+}
+
+fn render_confirm_download_path(f: &mut Frame, app: &App) {
+    let size = f.area();
+    let block = Block::default()
+        .title("Warning: Temporary Download Path")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
+
+    let content = format!(
+        "Your download path is currently set to '{}'.\n\
+        Files downloaded to /tmp are temporary and WILL BE DELETED by your OS on reboot.\n\n\
+        Are you sure you want to continue archiving to this location?\n\n\
+        Press 'y' or Enter to continue.\n\
+        Press 'n' or Esc to cancel and return.",
+        app.state().local_download_path
+    );
+
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .style(Style::default().fg(Color::Yellow));
+    f.render_widget(paragraph, size);
 }

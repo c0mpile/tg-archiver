@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 
 type TopicList = Vec<(i32, String)>;
 
-#[allow(dead_code)]
 pub struct TelegramClient {
     pub client: Client,
     // We hold onto the pool task so it gets aborted if/when TelegramClient is dropped,
@@ -104,6 +103,10 @@ impl TelegramClient {
             topic_cache: Arc::new(RwLock::new(HashMap::new())),
             peer_cache: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    pub async fn get_input_peer(&self, peer_id: i64) -> Option<grammers_tl_types::enums::InputPeer> {
+        self.peer_cache.read().await.get(&peer_id).cloned()
     }
 
     pub async fn resolve_channel(&self, username: &str) -> Result<(i64, String)> {
