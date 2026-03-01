@@ -1,0 +1,1 @@
+Generated `/create-task` execution plan for tg-archiver into `01_plan.md`. Breakdown includes 9 subtasks spanning from state foundation and TUI scaffolding, client login to worker pool management, heuristic fetching, uploading, and pause-resume orchestration.

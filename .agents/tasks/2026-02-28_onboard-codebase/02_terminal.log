@@ -1,0 +1,28 @@
+$ eza -Tla --git-ignore
+drwxr-xr-x    - kevin 28 Feb 17:45 .
+drwxr-xr-x    - kevin 28 Feb 17:23 ├── .agents
+drwxr-xr-x    - kevin 28 Feb 17:20 │   ├── rules
+.rw-r--r-- 3.2k kevin 28 Feb 17:19 │   │   ├── tg-archiver-arch.md
+.rw-r--r-- 6.1k kevin 28 Feb 17:19 │   │   ├── tg-archiver-core.md
+.rw-r--r-- 4.0k kevin 28 Feb 17:20 │   │   └── tg-archiver-tools.md
+drwxr-xr-x    - kevin 28 Feb 17:29 │   └── workflows
+.rw-r--r-- 1.2k kevin 28 Feb 17:24 │       ├── add-media-filter-category.md
+.rw-r--r-- 1.8k kevin 28 Feb 17:31 │       ├── add-telegram-operation.md
+.rw-r--r-- 1.4k kevin 28 Feb 17:30 │       ├── debug-flood-wait.md
+.rw-r--r-- 1.9k kevin 28 Feb 17:31 │       ├── pause-resume.md
+.rw-r--r-- 1.7k kevin 28 Feb 17:28 │       ├── state-schema-change.md
+.rw-r--r-- 1.3k kevin 28 Feb 17:27 │       └── tui-view.md
+.rw-r--r--   10 kevin 28 Feb 17:45 └── .gitignore
+
+$ git log -n 10
+commit 680e280a9c0033c32e093694a63e44b88faa4bcb (HEAD -> main, origin/main)
+Author: c0mpile <c0mpile@disroot.org>
+Date:   Sat Feb 28 17:46:25 2026 -0500
+
+    feat: add initial agent workflows for various tasks and a project .gitignore file.
+
+commit 629a8b157bed120d0497c2f15e3729778ff43e3e
+Author: c0mpile <c0mpile@disroot.org>
+Date:   Sat Feb 28 17:43:20 2026 -0500
+
+    project rules and workflows
