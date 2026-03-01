@@ -1,0 +1,2 @@
+cargo clippy -- -D warnings && cargo test && cargo build --release executed successfully
+Refined architecture passes all tests
