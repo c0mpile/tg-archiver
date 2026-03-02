@@ -695,8 +695,15 @@ impl App {
                 let paused_clone = Arc::clone(&self.is_paused);
 
                 if let Some(source_id) = self.state.source_channel_id {
+                    let dest_id = self.state.dest_group_id;
                     tokio::spawn(async move {
-                        if tg_clone.get_input_peer(source_id).await.is_none() {
+                        let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
+                        let dest_missing = match dest_id {
+                            Some(id) => tg_clone.get_input_peer(id).await.is_none(),
+                            None => false,
+                        };
+
+                        if source_missing || dest_missing {
                             let _ = tg_clone.get_joined_channels().await;
                             let _ = tg_clone.get_joined_groups().await;
                         }
@@ -758,8 +765,15 @@ impl App {
                     let paused_clone = Arc::clone(&self.is_paused);
 
                     if let Some(source_id) = self.state.source_channel_id {
+                        let dest_id = self.state.dest_group_id;
                         tokio::spawn(async move {
-                            if tg_clone.get_input_peer(source_id).await.is_none() {
+                            let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
+                            let dest_missing = match dest_id {
+                                Some(id) => tg_clone.get_input_peer(id).await.is_none(),
+                                None => false,
+                            };
+
+                            if source_missing || dest_missing {
                                 let _ = tg_clone.get_joined_channels().await;
                                 let _ = tg_clone.get_joined_groups().await;
                             }

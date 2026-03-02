@@ -129,32 +129,77 @@ async fn run_archive_loop(
                     }
 
                     let file_path = format!("{}/{}", local_download_path, filename);
+                    let mut description = existing_caption;
 
-                    let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
-                        msg_id,
-                        status: crate::state::DownloadStatus::InProgress { bytes_received: 0 },
-                    });
+                    if needs_download {
+                        let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                            msg_id,
+                            status: crate::state::DownloadStatus::InProgress { bytes_received: 0 },
+                        });
 
-                    let mut file = match tokio::fs::File::create(&file_path).await {
-                        Ok(f) => f,
-                        Err(e) => {
-                            let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
-                                msg_id,
-                                status: crate::state::DownloadStatus::Failed {
-                                    reason: e.to_string(),
-                                },
-                            });
-                            return;
-                        }
-                    };
+                        let mut file = match tokio::fs::File::create(&file_path).await {
+                            Ok(f) => f,
+                            Err(e) => {
+                                let _ = tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
+                                    msg_id,
+                                    status: crate::state::DownloadStatus::Failed {
+                                        reason: e.to_string(),
+                                    },
+                                });
+                                return;
+                            }
+                        };
 
-                    let mut bytes_received = 0u64;
-                    use tokio::io::AsyncWriteExt;
+                        let mut bytes_received = 0u64;
+                        use tokio::io::AsyncWriteExt;
 
-                    if is_photo {
-                        if let Some(grammers_client::media::Media::Photo(photo)) = &media {
-                            let mut download_iter =
-                                telegram_client_clone.client.iter_download(photo);
+                        if is_photo {
+                            if let Some(grammers_client::media::Media::Photo(photo)) = &media {
+                                let mut download_iter =
+                                    telegram_client_clone.client.iter_download(photo);
+                                loop {
+                                    match crate::retry_flood_wait!(download_iter.next()) {
+                                        Ok(Some(chunk)) => {
+                                            if let Err(e) = file.write_all(&chunk).await {
+                                                let _ = tx_clone.try_send(
+                                                    crate::app::AppEvent::DownloadProgress {
+                                                        msg_id,
+                                                        status:
+                                                            crate::state::DownloadStatus::Failed {
+                                                                reason: e.to_string(),
+                                                            },
+                                                    },
+                                                );
+                                                return;
+                                            }
+                                            bytes_received += chunk.len() as u64;
+                                            let _ = tx_clone.try_send(
+                                                crate::app::AppEvent::DownloadProgress {
+                                                    msg_id,
+                                                    status:
+                                                        crate::state::DownloadStatus::InProgress {
+                                                            bytes_received,
+                                                        },
+                                                },
+                                            );
+                                        }
+                                        Ok(None) => break,
+                                        Err(e) => {
+                                            let _ = tx_clone.try_send(
+                                                crate::app::AppEvent::DownloadProgress {
+                                                    msg_id,
+                                                    status: crate::state::DownloadStatus::Failed {
+                                                        reason: e.to_string(),
+                                                    },
+                                                },
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(grammers_client::media::Media::Document(doc)) = &media {
+                            let mut download_iter = telegram_client_clone.client.iter_download(doc);
                             loop {
                                 match crate::retry_flood_wait!(download_iter.next()) {
                                     Ok(Some(chunk)) => {
@@ -194,49 +239,9 @@ async fn run_archive_loop(
                                 }
                             }
                         }
-                    } else if let Some(grammers_client::media::Media::Document(doc)) = &media {
-                        let mut download_iter = telegram_client_clone.client.iter_download(doc);
-                        loop {
-                            match crate::retry_flood_wait!(download_iter.next()) {
-                                Ok(Some(chunk)) => {
-                                    if let Err(e) = file.write_all(&chunk).await {
-                                        let _ = tx_clone.try_send(
-                                            crate::app::AppEvent::DownloadProgress {
-                                                msg_id,
-                                                status: crate::state::DownloadStatus::Failed {
-                                                    reason: e.to_string(),
-                                                },
-                                            },
-                                        );
-                                        return;
-                                    }
-                                    bytes_received += chunk.len() as u64;
-                                    let _ =
-                                        tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
-                                            msg_id,
-                                            status: crate::state::DownloadStatus::InProgress {
-                                                bytes_received,
-                                            },
-                                        });
-                                }
-                                Ok(None) => break,
-                                Err(e) => {
-                                    let _ =
-                                        tx_clone.try_send(crate::app::AppEvent::DownloadProgress {
-                                            msg_id,
-                                            status: crate::state::DownloadStatus::Failed {
-                                                reason: e.to_string(),
-                                            },
-                                        });
-                                    return;
-                                }
-                            }
-                        }
-                    }
 
-                    let mut description = existing_caption;
+                        drop(file); // explicit drop to flush file before upload
 
-                    if needs_download {
                         if include_descriptions {
                             match telegram_client_clone
                                 .get_media_description(&input_peer_clone, msg_id, &msg_text)
