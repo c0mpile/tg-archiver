@@ -7,8 +7,8 @@ use tokio::sync::mpsc;
 pub enum AppEvent {
     Input(KeyEvent),
     Tick,
-    ChannelResolved(Result<(i64, String), String>),
-    GroupResolved(Result<(i64, String), String>),
+    ChannelsLoaded(Result<Vec<(i64, String)>, String>),
+    GroupsLoaded(Result<Vec<(i64, String)>, String>),
     TopicsLoaded(Result<Vec<(i32, String)>, String>),
     FilterConfigNextField,
     FilterConfigPrevField,
@@ -109,10 +109,15 @@ pub struct App {
     pub state: State,
     pub should_quit: bool,
     pub active_view: ActiveView,
-    pub input_buffer: String,
     pub resolution_error: Option<String>,
+    pub available_channels: Vec<(i64, String)>,
+    pub channel_list_state: ratatui::widgets::ListState,
+    pub is_loading_channels: bool,
+    pub available_groups: Vec<(i64, String)>,
+    pub group_list_state: ratatui::widgets::ListState,
+    pub is_loading_groups: bool,
     pub available_topics: Vec<(i32, String)>,
-    pub selected_topic_index: usize,
+    pub topic_list_state: ratatui::widgets::ListState,
     pub filter_config_state: FilterConfigState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -136,10 +141,15 @@ impl App {
             } else {
                 ActiveView::Home
             },
-            input_buffer: String::new(),
             resolution_error: None,
+            available_channels: Vec::new(),
+            channel_list_state: ratatui::widgets::ListState::default(),
+            is_loading_channels: false,
+            available_groups: Vec::new(),
+            group_list_state: ratatui::widgets::ListState::default(),
+            is_loading_groups: false,
             available_topics: Vec::new(),
-            selected_topic_index: 0,
+            topic_list_state: ratatui::widgets::ListState::default(),
             filter_config_state: FilterConfigState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -165,10 +175,28 @@ impl App {
                     ActiveView::Home => match key.code {
                         crossterm::event::KeyCode::Char('q') => self.should_quit = true,
                         crossterm::event::KeyCode::Char('1') => {
-                            self.active_view = ActiveView::ChannelSelect
+                            self.active_view = ActiveView::ChannelSelect;
+                            self.is_loading_channels = true;
+                            self.available_channels.clear();
+                            self.channel_list_state.select(Some(0));
+                            let tg = Arc::clone(telegram);
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let res = tg.get_joined_channels().await.map_err(|e| e.to_string());
+                                let _ = tx.send(AppEvent::ChannelsLoaded(res)).await;
+                            });
                         }
                         crossterm::event::KeyCode::Char('2') => {
-                            self.active_view = ActiveView::GroupSelect
+                            self.active_view = ActiveView::GroupSelect;
+                            self.is_loading_groups = true;
+                            self.available_groups.clear();
+                            self.group_list_state.select(Some(0));
+                            let tg = Arc::clone(telegram);
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let res = tg.get_joined_groups().await.map_err(|e| e.to_string());
+                                let _ = tx.send(AppEvent::GroupsLoaded(res)).await;
+                            });
                         }
                         crossterm::event::KeyCode::Char('3') => {
                             self.active_view = ActiveView::FilterConfig;
@@ -214,99 +242,158 @@ impl App {
                         _ => {}
                     },
                     ActiveView::ChannelSelect => match key.code {
-                        crossterm::event::KeyCode::Char(c) => self.input_buffer.push(c),
-                        crossterm::event::KeyCode::Backspace => {
-                            self.input_buffer.pop();
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if !self.available_channels.is_empty() {
+                                let i = match self.channel_list_state.selected() {
+                                    Some(i) => {
+                                        if i >= self.available_channels.len() - 1 {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.channel_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if !self.available_channels.is_empty() {
+                                let i = match self.channel_list_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.channel_list_state.select(Some(i));
+                            }
                         }
                         crossterm::event::KeyCode::Esc => {
                             self.active_view = ActiveView::Home;
-                            self.input_buffer.clear();
-                            self.resolution_error = None;
                         }
                         crossterm::event::KeyCode::Enter => {
-                            if !self.input_buffer.is_empty() {
-                                let username = self.input_buffer.clone();
+                            if let Some(i) = self.channel_list_state.selected()
+                                && let Some((id, title)) = self.available_channels.get(i)
+                            {
+                                self.state.source_channel_id = Some(*id);
+                                self.state.source_channel_title = Some(title.clone());
+                                let state_clone = self.state.clone();
+                                tokio::spawn(async move {
+                                    let _ = state_clone.save().await;
+                                });
+                                self.active_view = ActiveView::GroupSelect;
+                                self.is_loading_groups = true;
+                                self.available_groups.clear();
+                                self.group_list_state.select(Some(0));
                                 let tg = Arc::clone(telegram);
                                 let tx = tx.clone();
-
                                 tokio::spawn(async move {
-                                    let res = tg
-                                        .resolve_channel(&username)
-                                        .await
-                                        .map_err(|e| e.to_string());
-                                    let _ = tx.send(AppEvent::ChannelResolved(res)).await;
+                                    let res =
+                                        tg.get_joined_groups().await.map_err(|e| e.to_string());
+                                    let _ = tx.send(AppEvent::GroupsLoaded(res)).await;
                                 });
                             }
                         }
                         _ => {}
                     },
-                    ActiveView::GroupSelect => {
-                        match key.code {
-                            crossterm::event::KeyCode::Char(c) => self.input_buffer.push(c),
-                            crossterm::event::KeyCode::Backspace => {
-                                self.input_buffer.pop();
-                            }
-                            crossterm::event::KeyCode::Esc => {
-                                self.active_view = ActiveView::Home;
-                                self.input_buffer.clear();
-                                self.resolution_error = None;
-                            }
-                            crossterm::event::KeyCode::Enter => {
-                                if !self.input_buffer.is_empty() {
-                                    let username = self.input_buffer.clone();
-                                    let tg = Arc::clone(telegram);
-                                    let tx = tx.clone();
-
-                                    tokio::spawn(async move {
-                                        let res_group = tg
-                                            .resolve_group(&username)
-                                            .await
-                                            .map_err(|e| e.to_string());
-                                        match &res_group {
-                                            Ok((id, _title)) => {
-                                                // After resolving group, we automatically load topics
-                                                let res_topics = tg
-                                                    .list_topics(*id)
-                                                    .await
-                                                    .map_err(|e| e.to_string());
-                                                let _ = tx
-                                                    .send(AppEvent::GroupResolved(res_group))
-                                                    .await;
-                                                let _ = tx
-                                                    .send(AppEvent::TopicsLoaded(res_topics))
-                                                    .await;
-                                            }
-                                            Err(_) => {
-                                                let _ = tx
-                                                    .send(AppEvent::GroupResolved(res_group))
-                                                    .await;
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    ActiveView::TopicSelect => match key.code {
+                    ActiveView::GroupSelect => match key.code {
                         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-                            if !self.available_topics.is_empty()
-                                && self.selected_topic_index < self.available_topics.len() - 1
-                            {
-                                self.selected_topic_index += 1;
+                            if !self.available_groups.is_empty() {
+                                let i = match self.group_list_state.selected() {
+                                    Some(i) => {
+                                        if i >= self.available_groups.len() - 1 {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.group_list_state.select(Some(i));
                             }
                         }
                         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
-                            if self.selected_topic_index > 0 {
-                                self.selected_topic_index -= 1;
+                            if !self.available_groups.is_empty() {
+                                let i = match self.group_list_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.group_list_state.select(Some(i));
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Enter => {
-                            if let Some((id, title)) =
-                                self.available_topics.get(self.selected_topic_index)
+                            if let Some(i) = self.group_list_state.selected()
+                                && let Some((id, title)) = self.available_groups.get(i)
+                            {
+                                self.state.dest_group_id = Some(*id);
+                                self.state.dest_group_title = Some(title.clone());
+                                let state_clone = self.state.clone();
+                                tokio::spawn(async move {
+                                    let _ = state_clone.save().await;
+                                });
+                                self.active_view = ActiveView::TopicSelect;
+                                let tg = Arc::clone(telegram);
+                                let tx = tx.clone();
+                                let group_id = *id;
+                                tokio::spawn(async move {
+                                    let res_topics =
+                                        tg.list_topics(group_id).await.map_err(|e| e.to_string());
+                                    let _ = tx.send(AppEvent::TopicsLoaded(res_topics)).await;
+                                });
+                            }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::TopicSelect => match key.code {
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if !self.available_topics.is_empty() {
+                                let i = match self.topic_list_state.selected() {
+                                    Some(i) => {
+                                        if i >= self.available_topics.len() - 1 {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.topic_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if !self.available_topics.is_empty() {
+                                let i = match self.topic_list_state.selected() {
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
+                                    None => 0,
+                                };
+                                self.topic_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Home;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if let Some(i) = self.topic_list_state.selected()
+                                && let Some((id, title)) = self.available_topics.get(i)
                             {
                                 self.state.dest_topic_id = Some(*id);
                                 self.state.dest_topic_title = Some(title.clone());
@@ -435,42 +522,34 @@ impl App {
                 }
             }
             AppEvent::Tick => {}
-            AppEvent::ChannelResolved(res) => match res {
-                Ok((id, title)) => {
-                    self.state.source_channel_id = Some(id);
-                    self.state.source_channel_title = Some(title);
-                    self.active_view = ActiveView::GroupSelect;
-                    self.input_buffer.clear();
+            AppEvent::ChannelsLoaded(res) => match res {
+                Ok(channels) => {
+                    self.available_channels = channels;
+                    self.channel_list_state.select(Some(0));
+                    self.is_loading_channels = false;
                     self.resolution_error = None;
-                    let state_clone = self.state.clone();
-                    tokio::spawn(async move {
-                        let _ = state_clone.save().await;
-                    });
                 }
                 Err(err) => {
+                    self.is_loading_channels = false;
                     self.resolution_error = Some(err);
                 }
             },
-            AppEvent::GroupResolved(res) => match res {
-                Ok((id, title)) => {
-                    self.state.dest_group_id = Some(id);
-                    self.state.dest_group_title = Some(title);
-                    self.active_view = ActiveView::TopicSelect;
-                    self.input_buffer.clear();
+            AppEvent::GroupsLoaded(res) => match res {
+                Ok(groups) => {
+                    self.available_groups = groups;
+                    self.group_list_state.select(Some(0));
+                    self.is_loading_groups = false;
                     self.resolution_error = None;
-                    let state_clone = self.state.clone();
-                    tokio::spawn(async move {
-                        let _ = state_clone.save().await;
-                    });
                 }
                 Err(err) => {
+                    self.is_loading_groups = false;
                     self.resolution_error = Some(err);
                 }
             },
             AppEvent::TopicsLoaded(res) => match res {
                 Ok(topics) => {
                     self.available_topics = topics;
-                    self.selected_topic_index = 0;
+                    self.topic_list_state.select(Some(0));
                     self.resolution_error = None;
                 }
                 Err(err) => {

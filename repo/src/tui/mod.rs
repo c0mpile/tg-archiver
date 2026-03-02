@@ -10,11 +10,11 @@ use ratatui::{
 pub mod archive_progress;
 pub mod filter_config;
 
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     match app.active_view {
         ActiveView::Home => render_home(f, app),
-        ActiveView::ChannelSelect => render_input(f, app, "Select Source Channel"),
-        ActiveView::GroupSelect => render_input(f, app, "Select Destination Group"),
+        ActiveView::ChannelSelect => render_channel_select(f, app),
+        ActiveView::GroupSelect => render_group_select(f, app),
         ActiveView::TopicSelect => render_topic_select(f, app),
         ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
         ActiveView::ConfirmDownloadPath => render_confirm_download_path(f, app),
@@ -23,7 +23,7 @@ pub fn render(f: &mut Frame, app: &App) {
     }
 }
 
-fn render_home(f: &mut Frame, app: &App) {
+fn render_home(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let block = Block::default()
         .title("tg-archiver")
@@ -53,41 +53,109 @@ fn render_home(f: &mut Frame, app: &App) {
     f.render_widget(paragraph, size);
 }
 
-fn render_input(f: &mut Frame, app: &App, title: &str) {
+fn render_channel_select(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
-        .constraints([Constraint::Length(4), Constraint::Min(1)].as_ref())
+        .constraints([Constraint::Min(1), Constraint::Length(2)].as_ref())
         .split(size);
 
-    let input_block = Block::default()
-        .title(title)
+    let block = Block::default()
+        .title("Select Source Channel")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(Style::default().fg(Color::Green));
 
-    let mut lines = vec![Line::from(format!("> {}", app.input_buffer))];
+    let items: Vec<ListItem> = app
+        .available_channels
+        .iter()
+        .map(|(id, title)| ListItem::new(Line::from(Span::raw(format!("{}  {}", id, title)))))
+        .collect();
 
-    // Display error message in bold red if present
-    if let Some(err) = &app.resolution_error {
-        lines.push(Line::from(vec![
-            Span::styled(
-                "Error: ",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(err, Style::default().fg(Color::Red)),
-        ]));
+    if app.is_loading_channels {
+        let p = Paragraph::new("Loading channels...").block(block);
+        f.render_widget(p, chunks[0]);
+    } else if items.is_empty() {
+        let mut lines = vec![Line::from("No channels available.")];
+        if let Some(err) = &app.resolution_error {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Error: ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(err, Style::default().fg(Color::Red)),
+            ]));
+        }
+        let p = Paragraph::new(lines).block(block);
+        f.render_widget(p, chunks[0]);
+    } else {
+        let list = List::new(items).block(block).highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_stateful_widget(list, chunks[0], &mut app.channel_list_state);
     }
 
-    let paragraph = Paragraph::new(lines).block(input_block);
-    f.render_widget(paragraph, chunks[0]);
-
-    let help_text = Paragraph::new("Press Enter to submit, Esc to cancel.")
-        .style(Style::default().fg(Color::DarkGray));
+    let help_text =
+        Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
+            .style(Style::default().fg(Color::DarkGray));
     f.render_widget(help_text, chunks[1]);
 }
 
-fn render_topic_select(f: &mut Frame, app: &App) {
+fn render_group_select(f: &mut Frame, app: &mut App) {
+    let size = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([Constraint::Min(1), Constraint::Length(2)].as_ref())
+        .split(size);
+
+    let block = Block::default()
+        .title("Select Destination Group")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let items: Vec<ListItem> = app
+        .available_groups
+        .iter()
+        .map(|(id, title)| ListItem::new(Line::from(Span::raw(format!("{}  {}", id, title)))))
+        .collect();
+
+    if app.is_loading_groups {
+        let p = Paragraph::new("Loading groups...").block(block);
+        f.render_widget(p, chunks[0]);
+    } else if items.is_empty() {
+        let mut lines = vec![Line::from("No groups available.")];
+        if let Some(err) = &app.resolution_error {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "Error: ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(err, Style::default().fg(Color::Red)),
+            ]));
+        }
+        let p = Paragraph::new(lines).block(block);
+        f.render_widget(p, chunks[0]);
+    } else {
+        let list = List::new(items).block(block).highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_stateful_widget(list, chunks[0], &mut app.group_list_state);
+    }
+
+    let help_text =
+        Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
+            .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(help_text, chunks[1]);
+}
+
+fn render_topic_select(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -103,21 +171,9 @@ fn render_topic_select(f: &mut Frame, app: &App) {
     let items: Vec<ListItem> = app
         .available_topics
         .iter()
-        .enumerate()
-        .map(|(i, (_id, title))| {
-            let style = if i == app.selected_topic_index {
-                Style::default()
-                    .bg(Color::Cyan)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(Span::styled(title.clone(), style)))
-        })
+        .map(|(id, title)| ListItem::new(Line::from(Span::raw(format!("{}  {}", id, title)))))
         .collect();
 
-    // If there are no topics, show a message instead
     if items.is_empty() {
         let mut lines = vec![Line::from("No topics available or still loading...")];
         if let Some(err) = &app.resolution_error {
@@ -129,11 +185,16 @@ fn render_topic_select(f: &mut Frame, app: &App) {
                 Span::styled(err, Style::default().fg(Color::Red)),
             ]));
         }
-        let p = Paragraph::new(lines).block(block.clone());
+        let p = Paragraph::new(lines).block(block);
         f.render_widget(p, chunks[0]);
     } else {
-        let list = List::new(items).block(block);
-        f.render_widget(list, chunks[0]);
+        let list = List::new(items).block(block).highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_stateful_widget(list, chunks[0], &mut app.topic_list_state);
     }
 
     let help_text =
@@ -142,7 +203,7 @@ fn render_topic_select(f: &mut Frame, app: &App) {
     f.render_widget(help_text, chunks[1]);
 }
 
-fn render_confirm_download_path(f: &mut Frame, app: &App) {
+fn render_confirm_download_path(f: &mut Frame, app: &mut App) {
     let size = f.area();
     let block = Block::default()
         .title("Warning: Temporary Download Path")

@@ -110,7 +110,7 @@ async fn run_app(
     });
 
     loop {
-        terminal.draw(|f| tui::render(f, &app))?;
+        terminal.draw(|f| tui::render(f, &mut app))?;
 
         if let Some(event) = rx.recv().await {
             app.handle_event(event, &telegram_client, &tx);

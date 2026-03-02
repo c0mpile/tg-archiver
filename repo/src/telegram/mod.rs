@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 type TopicList = Vec<(i32, String)>;
+type DialogListCache = Arc<RwLock<Option<Vec<(i64, String)>>>>;
 
 pub struct TelegramClient {
     pub client: Client,
@@ -14,9 +15,8 @@ pub struct TelegramClient {
     // though in this app it typically runs for the lifetime of the program.
     _pool_task: tokio::task::JoinHandle<()>,
 
-    // App caches
-    channel_cache: Arc<RwLock<HashMap<String, (i64, String)>>>,
-    group_cache: Arc<RwLock<HashMap<String, (i64, String)>>>,
+    channel_list_cache: DialogListCache,
+    group_list_cache: DialogListCache,
     topic_cache: Arc<RwLock<HashMap<i64, TopicList>>>,
     peer_cache: Arc<RwLock<HashMap<i64, grammers_tl_types::enums::InputPeer>>>,
 }
@@ -98,8 +98,8 @@ impl TelegramClient {
         Ok(Self {
             client,
             _pool_task: pool_task,
-            channel_cache: Arc::new(RwLock::new(HashMap::new())),
-            group_cache: Arc::new(RwLock::new(HashMap::new())),
+            channel_list_cache: Arc::new(RwLock::new(None)),
+            group_list_cache: Arc::new(RwLock::new(None)),
             topic_cache: Arc::new(RwLock::new(HashMap::new())),
             peer_cache: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -110,69 +110,6 @@ impl TelegramClient {
         peer_id: i64,
     ) -> Option<grammers_tl_types::enums::InputPeer> {
         self.peer_cache.read().await.get(&peer_id).cloned()
-    }
-
-    pub async fn resolve_channel(&self, username: &str) -> Result<(i64, String)> {
-        let username_clean = username.trim_start_matches('@').to_string();
-
-        // Check cache
-        {
-            let cache = self.channel_cache.read().await;
-            if let Some(cached) = cache.get(&username_clean) {
-                return Ok(cached.clone());
-            }
-        }
-
-        // Resolve via API
-        let chat = crate::retry_flood_wait!(self.client.resolve_username(&username_clean))?
-            .context("Username not found")?;
-
-        let id: i64 = chat.id().bot_api_dialog_id();
-
-        let title = chat.name().unwrap_or("Unknown").to_string();
-
-        let input_peer_opt: Option<grammers_tl_types::enums::InputPeer> =
-            chat.to_ref().await.map(|r| r.into());
-        if let Some(peer) = input_peer_opt {
-            self.peer_cache.write().await.insert(id, peer);
-        }
-
-        let result = (id, title);
-        self.channel_cache
-            .write()
-            .await
-            .insert(username_clean, result.clone());
-        Ok(result)
-    }
-
-    pub async fn resolve_group(&self, username: &str) -> Result<(i64, String)> {
-        let username_clean = username.trim_start_matches('@').to_string();
-
-        {
-            let cache = self.group_cache.read().await;
-            if let Some(cached) = cache.get(&username_clean) {
-                return Ok(cached.clone());
-            }
-        }
-
-        let chat = crate::retry_flood_wait!(self.client.resolve_username(&username_clean))?
-            .context("Group username not found")?;
-
-        let id: i64 = chat.id().bot_api_dialog_id();
-        let title = chat.name().unwrap_or("Unknown").to_string();
-
-        let input_peer_opt: Option<grammers_tl_types::enums::InputPeer> =
-            chat.to_ref().await.map(|r| r.into());
-        if let Some(peer) = input_peer_opt {
-            self.peer_cache.write().await.insert(id, peer);
-        }
-
-        let result = (id, title);
-        self.group_cache
-            .write()
-            .await
-            .insert(username_clean, result.clone());
-        Ok(result)
     }
 
     pub async fn list_topics(&self, group_id: i64) -> Result<Vec<(i32, String)>> {
@@ -239,6 +176,94 @@ impl TelegramClient {
             .await
             .insert(group_id, topics.clone());
         Ok(topics)
+    }
+
+    pub async fn get_joined_channels(&self) -> Result<Vec<(i64, String)>> {
+        {
+            let cache = self.channel_list_cache.read().await;
+            if let Some(cached) = cache.as_ref() {
+                return Ok(cached.clone());
+            }
+        }
+
+        let mut channels = Vec::new();
+        let mut new_peers = Vec::new();
+        let mut iter = self.client.iter_dialogs();
+
+        while let Some(dialog) = crate::retry_flood_wait!(iter.next())? {
+            let peer = dialog.peer().clone();
+            if let grammers_client::peer::Peer::Channel(ref c) = peer
+                && c.raw.broadcast
+            {
+                let id = peer.id().bot_api_dialog_id();
+                let title = peer.name().unwrap_or("Unknown").to_string();
+                let input_peer_opt: Option<grammers_tl_types::enums::InputPeer> =
+                    peer.to_ref().await.map(|r| r.into());
+                if let Some(peer) = input_peer_opt {
+                    new_peers.push((id, peer));
+                }
+                channels.push((id, title));
+            }
+        }
+
+        if !new_peers.is_empty() {
+            let mut cache = self.peer_cache.write().await;
+            for (id, peer) in new_peers {
+                cache.insert(id, peer);
+            }
+        }
+
+        *self.channel_list_cache.write().await = Some(channels);
+        Ok(self
+            .channel_list_cache
+            .read()
+            .await
+            .as_ref()
+            .unwrap()
+            .clone())
+    }
+
+    pub async fn get_joined_groups(&self) -> Result<Vec<(i64, String)>> {
+        {
+            let cache = self.group_list_cache.read().await;
+            if let Some(cached) = cache.as_ref() {
+                return Ok(cached.clone());
+            }
+        }
+
+        let mut groups = Vec::new();
+        let mut new_peers = Vec::new();
+        let mut iter = self.client.iter_dialogs();
+
+        while let Some(dialog) = crate::retry_flood_wait!(iter.next())? {
+            let peer = dialog.peer().clone();
+            let is_target = match &peer {
+                grammers_client::peer::Peer::Group(_) => true,
+                grammers_client::peer::Peer::Channel(c) if c.raw.megagroup => true,
+                _ => false,
+            };
+
+            if is_target {
+                let id = peer.id().bot_api_dialog_id();
+                let title = peer.name().unwrap_or("Unknown").to_string();
+                let input_peer_opt: Option<grammers_tl_types::enums::InputPeer> =
+                    peer.to_ref().await.map(|r| r.into());
+                if let Some(peer) = input_peer_opt {
+                    new_peers.push((id, peer));
+                }
+                groups.push((id, title));
+            }
+        }
+
+        if !new_peers.is_empty() {
+            let mut cache = self.peer_cache.write().await;
+            for (id, peer) in new_peers {
+                cache.insert(id, peer);
+            }
+        }
+
+        *self.group_list_cache.write().await = Some(groups);
+        Ok(self.group_list_cache.read().await.as_ref().unwrap().clone())
     }
 
     pub async fn get_media_description(
