@@ -1,9 +1,10 @@
+$ cargo fmt
+$ cargo clippy -- -D warnings
     Checking tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.29s      
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.31s
+$ cargo test
    Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
-    Finished `release` profile [optimized] target(s) in 4.71s                
-   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s     
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s           
      Running unittests src/main.rs (target/debug/deps/tg_archiver-37dc63caa47ad166)
 
 running 3 tests
@@ -12,3 +13,5 @@ test state::tests::test_migration_compatibility ... ok
 test state::tests::test_round_trip ... ok
 
 test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo build --release
+    Finished `release` profile [optimized] target(s) in 4.75s

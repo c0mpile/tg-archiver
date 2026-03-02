@@ -13,6 +13,16 @@ pub fn start_archive_run(
     pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
+        if let Err(e) = tokio::fs::create_dir_all(&state.local_download_path).await {
+            let _ = tx
+                .send(AppEvent::ArchiveError(format!(
+                    "Failed to create download directory '{}': {}",
+                    state.local_download_path, e
+                )))
+                .await;
+            return;
+        }
+
         if let Err(e) = run_archive_loop(state, telegram_client, tx.clone(), pause_flag).await {
             let _ = tx.send(AppEvent::ArchiveError(e.to_string())).await;
         } else {
