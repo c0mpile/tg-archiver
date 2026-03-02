@@ -19,6 +19,7 @@ pub fn render(f: &mut Frame, app: &App) {
         ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
         ActiveView::ConfirmDownloadPath => render_confirm_download_path(f, app),
         ActiveView::ArchiveProgress => archive_progress::draw(f, app),
+        ActiveView::ResumePrompt => render_resume_prompt(f, app),
     }
 }
 
@@ -160,5 +161,28 @@ fn render_confirm_download_path(f: &mut Frame, app: &App) {
     let paragraph = Paragraph::new(content)
         .block(block)
         .style(Style::default().fg(Color::Yellow));
+    f.render_widget(paragraph, size);
+}
+
+fn render_resume_prompt(f: &mut Frame, _app: &App) {
+    let size = f.area();
+    let block = Block::default()
+        .title("Resume Previous Archive?")
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let content = "An unfinished archive session was detected.\n\n\
+        Would you like to resume from where it left off?\n\
+        Files that are partially downloaded will be restarted from scratch, but completed files will be skipped.\n\n\
+        Press 'y' or Enter to Resume.\n\
+        Press 'n' to Start Fresh (clears previous progress).";
+
+    let paragraph = Paragraph::new(content)
+        .block(block)
+        .style(Style::default().fg(Color::White));
     f.render_widget(paragraph, size);
 }

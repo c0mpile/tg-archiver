@@ -28,6 +28,8 @@ pub enum AppEvent {
     ArchiveComplete,
     ArchiveError(String),
     SaveCursor(i32),
+    TogglePause,
+    PromptResumeResult(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -40,6 +42,7 @@ pub enum ActiveView {
     FilterConfig,
     ConfirmDownloadPath,
     ArchiveProgress,
+    ResumePrompt,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -111,20 +114,34 @@ pub struct App {
     pub available_topics: Vec<(i32, String)>,
     pub selected_topic_index: usize,
     pub filter_config_state: FilterConfigState,
+    pub is_paused: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl App {
     pub fn new(config: Config, state: State) -> Self {
+        let has_partial_state = state.message_cursor.is_some()
+            || state.download_status.values().any(|s| {
+                matches!(
+                    s,
+                    crate::state::DownloadStatus::Pending
+                        | crate::state::DownloadStatus::InProgress { .. }
+                )
+            });
         Self {
             config,
             state,
             should_quit: false,
-            active_view: ActiveView::Home,
+            active_view: if has_partial_state {
+                ActiveView::ResumePrompt
+            } else {
+                ActiveView::Home
+            },
             input_buffer: String::new(),
             resolution_error: None,
             available_topics: Vec::new(),
             selected_topic_index: 0,
             filter_config_state: FilterConfigState::default(),
+            is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -379,9 +396,42 @@ impl App {
                         }
                         _ => {}
                     },
-                    ActiveView::ArchiveProgress => {
-                        // TODO: handle user input for archive progress
-                    }
+                    ActiveView::ArchiveProgress => match key.code {
+                        crossterm::event::KeyCode::Char('p')
+                        | crossterm::event::KeyCode::Char(' ') => {
+                            let tx = tx.clone();
+                            let _ = tx.try_send(AppEvent::TogglePause);
+                        }
+                        crossterm::event::KeyCode::Char('c')
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
+                            self.should_quit = true;
+                        }
+                        _ => {}
+                    },
+                    ActiveView::ResumePrompt => match key.code {
+                        crossterm::event::KeyCode::Char('y')
+                        | crossterm::event::KeyCode::Char('Y')
+                        | crossterm::event::KeyCode::Enter => {
+                            let tx = tx.clone();
+                            let _ = tx.try_send(AppEvent::PromptResumeResult(true));
+                        }
+                        crossterm::event::KeyCode::Char('n')
+                        | crossterm::event::KeyCode::Char('N') => {
+                            let tx = tx.clone();
+                            let _ = tx.try_send(AppEvent::PromptResumeResult(false));
+                        }
+                        crossterm::event::KeyCode::Char('c')
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
+                            self.should_quit = true;
+                        }
+                        _ => {}
+                    },
                 }
             }
             AppEvent::Tick => {}
@@ -536,6 +586,7 @@ impl App {
                     self.state.clone(),
                     Arc::clone(telegram),
                     tx.clone(),
+                    Arc::clone(&self.is_paused),
                 );
             }
             AppEvent::DownloadProgress { msg_id, status } => {
@@ -564,6 +615,37 @@ impl App {
                 tokio::spawn(async move {
                     let _ = state_clone.save().await;
                 });
+            }
+            AppEvent::TogglePause => {
+                // Toggle the atomic bool
+                let current = self.is_paused.load(std::sync::atomic::Ordering::Relaxed);
+                self.is_paused
+                    .store(!current, std::sync::atomic::Ordering::Relaxed);
+
+                // Immediately save state when paused or unpaused
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+            }
+            AppEvent::PromptResumeResult(resume) => {
+                if resume {
+                    self.active_view = ActiveView::ArchiveProgress;
+                    crate::archive::start_archive_run(
+                        self.state.clone(),
+                        Arc::clone(telegram),
+                        tx.clone(),
+                        Arc::clone(&self.is_paused),
+                    );
+                } else {
+                    self.state.message_cursor = None;
+                    self.state.download_status.clear();
+                    let state_clone = self.state.clone();
+                    tokio::spawn(async move {
+                        let _ = state_clone.save().await;
+                    });
+                    self.active_view = ActiveView::Home;
+                }
             }
         }
     }

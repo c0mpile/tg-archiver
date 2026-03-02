@@ -97,8 +97,15 @@ impl State {
         }
 
         let content = fs::read_to_string(&state_file).await?;
-        match serde_json::from_str(&content) {
-            Ok(state) => Ok(state),
+        match serde_json::from_str::<State>(&content) {
+            Ok(mut state) => {
+                for status in state.download_status.values_mut() {
+                    if let DownloadStatus::InProgress { .. } = status {
+                        *status = DownloadStatus::Pending;
+                    }
+                }
+                Ok(state)
+            }
             Err(e) => {
                 anyhow::bail!("State deserialisation failed: {}", e);
             }

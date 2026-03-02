@@ -1,0 +1,25 @@
+# Pause/Resume Architecture and State Persistence
+
+- [ ] `src/state/mod.rs`
+  - [ ] Modify `State::load()` to map `InProgress` variants to `Pending` on startup.
+- [ ] `src/app/mod.rs`
+  - [ ] Add `pub is_paused: Arc<AtomicBool>` to `App`.
+  - [ ] Add `AppEvent::TogglePause` and `AppEvent::PromptResumeResult(bool)`.
+  - [ ] Add `ActiveView::ResumePrompt`.
+  - [ ] Update `App::new()` to initialize `is_paused` to `false` and set `active_view` to `ResumePrompt` if partial state exists.
+  - [ ] Handle `TogglePause` event (toggles boolean, flush state).
+  - [ ] Handle `PromptResumeResult` event ('y' starts run, 'n' clears state and goes Home).
+  - [ ] Handle pause toggle keybind in `ArchiveProgress` view.
+- [ ] `src/tui/mod.rs` & `src/tui/archive_progress.rs`
+  - [ ] Add `render_resume_prompt`.
+  - [ ] Display `[PAUSED]` in `archive_progress` view if `app.is_paused` is true.
+- [ ] `src/archive/mod.rs`
+  - [ ] Pass `pause_flag: Arc<AtomicBool>` to `start_archive_run` and `run_archive_loop`.
+  - [ ] Wait loop in `run_archive_loop` when `pause_flag` is true.
+  - [ ] Track `lowest_msg_id` instead of `highest_msg_id`.
+  - [ ] Send `AppEvent::SaveCursor(lowest_msg_id)`.
+  - [ ] Use `offset_id(cursor)` on the message iterator when resuming.
+- [ ] Verification
+  - [ ] Run `cargo clippy`.
+  - [ ] Run `cargo test`.
+  - [ ] Test interactively.

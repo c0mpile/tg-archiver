@@ -23,9 +23,16 @@ pub fn draw(f: &mut Frame, app: &App) {
         )
         .split(f.area());
 
-    let title = Paragraph::new("Archive Progress")
+    let title_text = if app.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+        "Archive Progress [PAUSED]"
+    } else {
+        "Archive Progress"
+    };
+
+    let title = Paragraph::new(title_text)
         .style(Style::default().fg(Color::Cyan))
         .block(Block::default().borders(Borders::ALL));
+
     f.render_widget(title, chunks[0]);
 
     // Active Downloads

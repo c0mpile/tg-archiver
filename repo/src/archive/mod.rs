@@ -10,9 +10,10 @@ pub fn start_archive_run(
     state: State,
     telegram_client: Arc<TelegramClient>,
     tx: mpsc::Sender<AppEvent>,
+    pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = run_archive_loop(state, telegram_client, tx.clone()).await {
+        if let Err(e) = run_archive_loop(state, telegram_client, tx.clone(), pause_flag).await {
             let _ = tx.send(AppEvent::ArchiveError(e.to_string())).await;
         } else {
             let _ = tx.send(AppEvent::ArchiveComplete).await;
@@ -24,6 +25,7 @@ async fn run_archive_loop(
     state: State,
     telegram_client: Arc<TelegramClient>,
     tx: mpsc::Sender<AppEvent>,
+    pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
     let source_channel_id = state
         .source_channel_id
@@ -40,20 +42,27 @@ async fn run_archive_loop(
 
     let semaphore = Arc::new(Semaphore::new(DEFAULT_CONCURRENCY));
 
-    // Keep a cursor of the highest message ID processed so far
-    let mut highest_msg_id = state.message_cursor.unwrap_or(0);
+    // Keep a cursor of the lowest message ID processed so far (since grammers retrieves newest-first)
+    let mut lowest_msg_id = state.message_cursor.unwrap_or(i32::MAX);
     let mut local_messages_processed = 0;
 
     // Create the message iterator
     let mut message_iter = telegram_client.client.iter_messages(input_peer.clone());
+    if let Some(cursor) = state.message_cursor {
+        message_iter = message_iter.offset_id(cursor);
+    }
 
     // To respect the chunking delay
     while let Some(msg) = crate::retry_flood_wait!(message_iter.next())? {
+        while pause_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+
         let msg_id = msg.id();
 
-        // Update highest msg id processed in this batch
-        if msg_id > highest_msg_id {
-            highest_msg_id = msg_id;
+        // Update lowest msg id processed in this batch
+        if msg_id < lowest_msg_id {
+            lowest_msg_id = msg_id;
         }
 
         // Apply filtering logic
@@ -309,9 +318,8 @@ async fn run_archive_loop(
             // We've processed a chunk of 100 messages locally.
             // Persist the cursor
             // Since `state` was moved into the function, we can't easily mutate and save without having a handle,
-            // but we can send an event to App to save state, or do it here.
-            // Actually, wait, modifying state here doesn't update `App`'s state directly unless we send an event.
-            let _ = tx.send(AppEvent::SaveCursor(highest_msg_id)).await;
+            // but we can send an event to App to save state.
+            let _ = tx.send(AppEvent::SaveCursor(lowest_msg_id)).await;
 
             // Apply 500ms delay
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -320,7 +328,7 @@ async fn run_archive_loop(
     }
 
     // End of stream, save final cursor
-    let _ = tx.send(AppEvent::SaveCursor(highest_msg_id)).await;
+    let _ = tx.send(AppEvent::SaveCursor(lowest_msg_id)).await;
 
     // Wait for all workers to finish
     // A simple way is to acquire *all* permits
