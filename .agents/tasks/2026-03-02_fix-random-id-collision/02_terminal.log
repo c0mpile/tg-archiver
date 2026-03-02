@@ -1,0 +1,19 @@
+[2026-03-02 17:38:00] cd repo
+[2026-03-02 17:38:00] cargo fmt -- --check
+[2026-03-02 17:38:01] cargo clippy -- -D warnings
+    Checking tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.34s            
+[2026-03-02 17:38:01] cargo build --release
+   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `release` profile [optimized] target(s) in 3.02s                      
+[2026-03-02 17:38:04] cargo test
+   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s           
+     Running unittests src/main.rs (target/debug/deps/tg_archiver-37dc63caa47ad166)
+
+running 3 tests
+test telegram::tests::test_init_telegram_client ... ignored
+test state::tests::test_migration_compatibility ... ok
+test state::tests::test_round_trip ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s

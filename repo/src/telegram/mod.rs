@@ -331,14 +331,14 @@ impl TelegramClient {
         topic_id: Option<i32>,
     ) -> Result<()> {
         use grammers_tl_types::functions::messages::ForwardMessages;
+        let base_micros = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as i64;
         let random_id: Vec<i64> = msg_ids
             .iter()
-            .map(|_| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_micros() as i64
-            })
+            .enumerate()
+            .map(|(i, _)| base_micros + i as i64)
             .collect();
 
         let req = ForwardMessages {
