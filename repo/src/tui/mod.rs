@@ -17,7 +17,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ActiveView::GroupSelect => render_group_select(f, app),
         ActiveView::TopicSelect => render_topic_select(f, app),
         ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
-        ActiveView::ConfirmDownloadPath => render_confirm_download_path(f, app),
         ActiveView::ArchiveProgress => archive_progress::draw(f, app),
         ActiveView::ResumePrompt => render_resume_prompt(f, app),
     }
@@ -48,8 +47,7 @@ fn render_home(f: &mut Frame, app: &mut App) {
         )),
         Line::from(""),
         Line::from("Press '1' to set source channel."),
-        Line::from("Press '2' to set destination group & topic."),
-        Line::from("Press '3' to configure filters & download path."),
+        Line::from("Press '3' to configure threshold."),
         Line::from("Press 's' to start archive."),
         Line::from("Press 'q' or Ctrl-C to quit."),
     ];
@@ -184,11 +182,19 @@ fn render_topic_select(f: &mut Frame, app: &mut App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
-    let items: Vec<ListItem> = app
+    let mut items: Vec<ListItem> = app
         .available_topics
         .iter()
         .map(|(id, title)| ListItem::new(Line::from(Span::raw(format!("{}  {}", id, title)))))
         .collect();
+
+    items.insert(
+        0,
+        ListItem::new(Line::from(Span::styled(
+            "<Create new topic named automatically>",
+            Style::default().fg(Color::Yellow),
+        ))),
+    );
 
     if items.is_empty() {
         let mut lines = vec![Line::from("No topics available or still loading...")];
@@ -217,28 +223,6 @@ fn render_topic_select(f: &mut Frame, app: &mut App) {
         Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
             .style(Style::default().fg(Color::DarkGray));
     f.render_widget(help_text, chunks[1]);
-}
-
-fn render_confirm_download_path(f: &mut Frame, app: &mut App) {
-    let size = f.area();
-    let block = Block::default()
-        .title("Warning: Temporary Download Path")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
-
-    let content = format!(
-        "Your download path is currently set to '{}'.\n\
-        Files downloaded to /tmp are temporary and WILL BE DELETED by your OS on reboot.\n\n\
-        Are you sure you want to continue archiving to this location?\n\n\
-        Press 'y' or Enter to continue.\n\
-        Press 'n' or Esc to cancel and return.",
-        app.state().local_download_path
-    );
-
-    let paragraph = Paragraph::new(content)
-        .block(block)
-        .style(Style::default().fg(Color::Yellow));
-    f.render_widget(paragraph, size);
 }
 
 fn render_resume_prompt(f: &mut Frame, _app: &App) {

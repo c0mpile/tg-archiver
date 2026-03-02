@@ -26,65 +26,11 @@ pub fn render_filter_config(f: &mut Frame, app: &App) {
 
     let fields = vec![
         (
-            FilterConfigField::Video,
-            format!("Video: {}", if state.filter_video { "[x]" } else { "[ ]" }),
-        ),
-        (
-            FilterConfigField::Audio,
-            format!("Audio: {}", if state.filter_audio { "[x]" } else { "[ ]" }),
-        ),
-        (
-            FilterConfigField::Image,
-            format!("Image: {}", if state.filter_image { "[x]" } else { "[ ]" }),
-        ),
-        (
-            FilterConfigField::Archive,
-            format!(
-                "Archive: {}",
-                if state.filter_archive { "[x]" } else { "[ ]" }
-            ),
-        ),
-        (
-            FilterConfigField::IncludeText,
-            format!(
-                "Text Descriptions: {}",
-                if state.include_text_descriptions {
-                    "[x]"
-                } else {
-                    "[ ]"
-                }
-            ),
-        ),
-        (
-            FilterConfigField::MinSize,
-            format!(
-                "Min Size (MB): {}{}",
-                state.min_size_mb,
-                if state.editing && state.selected_field == FilterConfigField::MinSize {
-                    "█"
-                } else {
-                    ""
-                }
-            ),
-        ),
-        (
             FilterConfigField::PostCount,
             format!(
-                "Post Count Threshold: {}{}",
+                "Post Count Threshold (0 = all): {}{}",
                 state.post_count_threshold,
                 if state.editing && state.selected_field == FilterConfigField::PostCount {
-                    "█"
-                } else {
-                    ""
-                }
-            ),
-        ),
-        (
-            FilterConfigField::DownloadPath,
-            format!(
-                "Download Path: {}{}",
-                state.local_download_path,
-                if state.editing && state.selected_field == FilterConfigField::DownloadPath {
                     "█"
                 } else {
                     ""

@@ -3,11 +3,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::app::App;
-use crate::state::DownloadStatus;
 
 pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -35,60 +34,36 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     f.render_widget(title, chunks[0]);
 
-    // Active Downloads
-    let mut items = Vec::new();
-    let statuses = &app.state.download_status;
+    // Active Status
+    let total = app.state.source_message_count.unwrap_or(0);
 
-    // We only show a limited number. The user plan said:
-    // Render overall progress and list of active downloads with statuses
+    // We can't really track detailed progress anymore easily without traversing msg ids,
+    // so we'll just show the last forwarded msg id.
+    let current_id = app.state.last_forwarded_message_id.unwrap_or(0);
 
-    let mut in_progress = 0;
-    let mut completed = 0;
-    let mut failed = 0;
-    let mut skipped = 0;
+    let info = vec![
+        Line::from(vec![
+            Span::styled(
+                "Highest Source Message ID: ",
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw(total.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "Last Forwarded Message ID: ",
+                Style::default().fg(Color::Green),
+            ),
+            Span::raw(current_id.to_string()),
+        ]),
+    ];
 
-    for (msg_id, status) in statuses.iter() {
-        match status {
-            DownloadStatus::InProgress { bytes_received } => {
-                in_progress += 1;
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("Msg {}: ", msg_id),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Span::raw(format!("Downloading... {} bytes", bytes_received)),
-                ])));
-            }
-            DownloadStatus::Complete { .. } => completed += 1,
-            DownloadStatus::Uploaded => completed += 1,
-            DownloadStatus::Failed { reason } => {
-                failed += 1;
-                items.push(ListItem::new(Line::from(vec![
-                    Span::styled(format!("Msg {}: ", msg_id), Style::default().fg(Color::Red)),
-                    Span::raw(format!("Failed: {}", reason)),
-                ])));
-            }
-            DownloadStatus::Skipped => skipped += 1,
-            DownloadStatus::Pending => {}
-        }
-    }
-
-    let active_list = List::new(items).block(
-        Block::default()
-            .title("Active Downloads & Errors")
-            .borders(Borders::ALL),
-    );
-    f.render_widget(active_list, chunks[1]);
+    let info_widget =
+        Paragraph::new(info).block(Block::default().title("Job Status").borders(Borders::ALL));
+    f.render_widget(info_widget, chunks[1]);
 
     // Summary Footer
-    let summary = format!(
-        "Processed messages: {} | Completed: {} | Skipped: {} | Failed: {} | Active: {}",
-        app.state.message_cursor.unwrap_or(0),
-        completed,
-        skipped,
-        failed,
-        in_progress
-    );
+    let summary = format!("Forwarded ID: {} / {}", current_id, total);
     let footer = Paragraph::new(summary)
         .style(Style::default().fg(Color::Green))
         .block(Block::default().borders(Borders::ALL));

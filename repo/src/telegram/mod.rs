@@ -266,65 +266,107 @@ impl TelegramClient {
         Ok(self.group_list_cache.read().await.as_ref().unwrap().clone())
     }
 
-    pub async fn get_media_description(
-        &self,
-        peer: &grammers_tl_types::enums::InputPeer,
-        msg_id: i32,
-        msg_text: &str,
-    ) -> Result<Option<String>> {
-        if !msg_text.trim().is_empty() {
-            return Ok(Some(msg_text.trim().to_string()));
-        }
+    pub async fn create_topic(&self, group_id: i64, title: &str) -> Result<i32> {
+        let peer_cache = self.peer_cache.read().await;
+        let input_peer = peer_cache
+            .get(&group_id)
+            .context("Group ID not found in memory cache.")?
+            .clone();
+        drop(peer_cache);
 
-        let mut count = 0;
-        let mut iter = self.client.iter_messages(peer.clone()).offset_id(msg_id);
+        use grammers_tl_types::functions::messages::CreateForumTopic;
 
-        while let Some(prev_msg) = crate::retry_flood_wait!(iter.next())? {
-            count += 1;
-            if count > 3 {
-                break;
-            }
-            if prev_msg.media().is_none() {
-                let txt = prev_msg.text();
-                if !txt.trim().is_empty() {
-                    return Ok(Some(txt.trim().to_string()));
+        // rand::random is okay if available, but let's just use a simple mock random id or timestamp
+        let random_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as i64;
+
+        let req = CreateForumTopic {
+            title_missing: false,
+            peer: input_peer,
+            title: title.to_string(),
+            icon_color: None,
+            icon_emoji_id: None,
+            random_id,
+            send_as: None,
+        };
+
+        let res = crate::retry_flood_wait!(self.client.invoke(&req))?;
+
+        // Updates returned by CreateForumTopic contains the new topic ID
+        // Usually, the easiest way is to parse the updates
+        let topic_id = match res {
+            grammers_tl_types::enums::Updates::Updates(u) => {
+                let mut found_id = None;
+                for update in u.updates {
+                    if let grammers_tl_types::enums::Update::MessageId(m) = update {
+                        found_id = Some(m.id);
+                        break;
+                    }
                 }
+                found_id
             }
-        }
-
-        Ok(None)
-    }
-
-    pub async fn upload_media(
-        &self,
-        file_path: &str,
-        peer: &grammers_tl_types::enums::InputPeer,
-        topic_id: Option<i32>,
-        caption: Option<String>,
-        is_photo: bool,
-    ) -> Result<()> {
-        let uploaded = crate::retry_flood_wait!(self.client.upload_file(file_path))
-            .context("Failed to upload file")?;
-
-        let mut msg = grammers_client::message::InputMessage::new();
-        if let Some(text) = caption
-            && !text.trim().is_empty()
-        {
-            msg = msg.text(text);
-        }
-
-        if is_photo {
-            msg = msg.photo(uploaded);
-        } else {
-            msg = msg.document(uploaded);
-        }
+            _ => None,
+        };
 
         if let Some(tid) = topic_id {
-            msg = msg.reply_to(Some(tid));
+            Ok(tid)
+        } else {
+            // Fallback: list topics and find the one with this name
+            let topics = self.list_topics(group_id).await?;
+            topics
+                .into_iter()
+                .find(|(_, t)| t == title)
+                .map(|(id, _)| id)
+                .context("Failed to extract new topic ID from response")
         }
+    }
 
-        crate::retry_flood_wait!(self.client.send_message(peer.clone(), msg.clone()))
-            .context("Failed to send uploaded media to topic")?;
+    pub async fn forward_messages_as_copy(
+        &self,
+        from_peer: &grammers_tl_types::enums::InputPeer,
+        to_peer: &grammers_tl_types::enums::InputPeer,
+        msg_ids: &[i32],
+        topic_id: Option<i32>,
+    ) -> Result<()> {
+        use grammers_tl_types::functions::messages::ForwardMessages;
+        let random_id: Vec<i64> = msg_ids
+            .iter()
+            .map(|_| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros() as i64
+            })
+            .collect();
+
+        let req = ForwardMessages {
+            silent: false,
+            background: false,
+            with_my_score: false,
+            drop_author: true,
+            drop_media_captions: false,
+            noforwards: false,
+            allow_paid_floodskip: false,
+            from_peer: from_peer.clone(),
+            id: msg_ids.to_vec(),
+            random_id,
+            to_peer: to_peer.clone(),
+            top_msg_id: topic_id,
+            reply_to: None,
+            schedule_date: None,
+            schedule_repeat_period: None,
+            send_as: None,
+            quick_reply_shortcut: None,
+            effect: None,
+            video_timestamp: None,
+            allow_paid_stars: None,
+            suggested_post: None,
+        };
+
+        let _res = crate::retry_flood_wait!(self.client.invoke(&req))
+            .context("Failed to forward messages as copy")?;
 
         Ok(())
     }
