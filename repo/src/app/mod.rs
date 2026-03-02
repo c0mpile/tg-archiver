@@ -688,12 +688,26 @@ impl App {
             }
             AppEvent::StartArchiveRun => {
                 self.active_view = ActiveView::ArchiveProgress;
-                crate::archive::start_archive_run(
-                    self.state.clone(),
-                    Arc::clone(telegram),
-                    tx.clone(),
-                    Arc::clone(&self.is_paused),
-                );
+
+                let state_clone = self.state.clone();
+                let tg_clone = Arc::clone(telegram);
+                let tx_clone = tx.clone();
+                let paused_clone = Arc::clone(&self.is_paused);
+
+                if let Some(source_id) = self.state.source_channel_id {
+                    tokio::spawn(async move {
+                        if tg_clone.get_input_peer(source_id).await.is_none() {
+                            let _ = tg_clone.get_joined_channels().await;
+                            let _ = tg_clone.get_joined_groups().await;
+                        }
+                        crate::archive::start_archive_run(
+                            state_clone,
+                            tg_clone,
+                            tx_clone,
+                            paused_clone,
+                        );
+                    });
+                }
             }
             AppEvent::DownloadProgress { msg_id, status } => {
                 self.state.download_status.insert(msg_id, status);
@@ -716,7 +730,8 @@ impl App {
                 });
             }
             AppEvent::ArchiveError(err) => {
-                self.resolution_error = Some(err);
+                self.home_error = Some(err);
+                self.active_view = ActiveView::Home;
                 let state_clone = self.state.clone();
                 tokio::spawn(async move {
                     let _ = state_clone.save().await;
@@ -737,12 +752,25 @@ impl App {
             AppEvent::PromptResumeResult(resume) => {
                 if resume {
                     self.active_view = ActiveView::ArchiveProgress;
-                    crate::archive::start_archive_run(
-                        self.state.clone(),
-                        Arc::clone(telegram),
-                        tx.clone(),
-                        Arc::clone(&self.is_paused),
-                    );
+                    let state_clone = self.state.clone();
+                    let tg_clone = Arc::clone(telegram);
+                    let tx_clone = tx.clone();
+                    let paused_clone = Arc::clone(&self.is_paused);
+
+                    if let Some(source_id) = self.state.source_channel_id {
+                        tokio::spawn(async move {
+                            if tg_clone.get_input_peer(source_id).await.is_none() {
+                                let _ = tg_clone.get_joined_channels().await;
+                                let _ = tg_clone.get_joined_groups().await;
+                            }
+                            crate::archive::start_archive_run(
+                                state_clone,
+                                tg_clone,
+                                tx_clone,
+                                paused_clone,
+                            );
+                        });
+                    }
                 } else {
                     self.state.message_cursor = None;
                     self.state.download_status.clear();
