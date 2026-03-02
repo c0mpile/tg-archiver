@@ -110,6 +110,7 @@ pub struct App {
     pub should_quit: bool,
     pub active_view: ActiveView,
     pub resolution_error: Option<String>,
+    pub home_error: Option<String>,
     pub available_channels: Vec<(i64, String)>,
     pub channel_list_state: ratatui::widgets::ListState,
     pub is_loading_channels: bool,
@@ -142,6 +143,7 @@ impl App {
                 ActiveView::Home
             },
             resolution_error: None,
+            home_error: None,
             available_channels: Vec::new(),
             channel_list_state: ratatui::widgets::ListState::default(),
             is_loading_channels: false,
@@ -223,6 +225,24 @@ impl App {
                             };
                         }
                         crossterm::event::KeyCode::Char('s') => {
+                            let mut missing = Vec::new();
+                            if self.state.source_channel_id.is_none() {
+                                missing.push("Source Channel");
+                            }
+                            if self.state.dest_group_id.is_none() {
+                                missing.push("Destination Group");
+                            }
+                            if self.state.dest_topic_id.is_none() {
+                                missing.push("Destination Topic");
+                            }
+
+                            if !missing.is_empty() {
+                                self.home_error =
+                                    Some(format!("Missing configuration: {}", missing.join(", ")));
+                                return;
+                            }
+                            self.home_error = None;
+
                             if self.state.local_download_path == "/tmp"
                                 || self.state.local_download_path.starts_with("/tmp/")
                             {
@@ -273,6 +293,7 @@ impl App {
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
+                            self.home_error = None;
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Enter => {
@@ -332,6 +353,7 @@ impl App {
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
+                            self.home_error = None;
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Enter => {
@@ -389,6 +411,7 @@ impl App {
                             }
                         }
                         crossterm::event::KeyCode::Esc => {
+                            self.home_error = None;
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Enter => {
@@ -401,6 +424,7 @@ impl App {
                                 tokio::spawn(async move {
                                     let _ = state_clone.save().await;
                                 });
+                                self.home_error = None;
                                 self.active_view = ActiveView::Home;
                             }
                         }
@@ -472,6 +496,7 @@ impl App {
                         crossterm::event::KeyCode::Char('n')
                         | crossterm::event::KeyCode::Char('N')
                         | crossterm::event::KeyCode::Esc => {
+                            self.home_error = None;
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Char('c')
@@ -626,6 +651,7 @@ impl App {
                 st.editing = false;
             }
             AppEvent::ExitFilterConfig => {
+                self.home_error = None;
                 self.active_view = ActiveView::Home;
             }
             AppEvent::SaveFilterConfig => {
@@ -657,6 +683,7 @@ impl App {
                 tokio::spawn(async move {
                     let _ = state_clone.save().await;
                 });
+                self.home_error = None;
                 self.active_view = ActiveView::Home;
             }
             AppEvent::StartArchiveRun => {
@@ -723,6 +750,7 @@ impl App {
                     tokio::spawn(async move {
                         let _ = state_clone.save().await;
                     });
+                    self.home_error = None;
                     self.active_view = ActiveView::Home;
                 }
             }

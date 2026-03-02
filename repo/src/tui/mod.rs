@@ -38,18 +38,34 @@ fn render_home(f: &mut Frame, app: &mut App) {
     let group_text = app.state().dest_group_title.as_deref().unwrap_or("None");
     let topic_text = app.state().dest_topic_title.as_deref().unwrap_or("None");
 
-    let content = format!(
-        "Welcome to tg-archiver shell.\n\n\
-        1. Source Channel: {}\n\
-        2. Destination Group: {} (Topic: {})\n\n\
-        Press '1' to set source channel.\n\
-        Press '2' to set destination group & topic.\n\
-        Press '3' to configure filters & download path.\n\
-        Press 'q' or Ctrl-C to quit.",
-        channel_text, group_text, topic_text
-    );
+    let mut lines = vec![
+        Line::from("Welcome to tg-archiver shell."),
+        Line::from(""),
+        Line::from(format!("1. Source Channel: {}", channel_text)),
+        Line::from(format!(
+            "2. Destination Group: {} (Topic: {})",
+            group_text, topic_text
+        )),
+        Line::from(""),
+        Line::from("Press '1' to set source channel."),
+        Line::from("Press '2' to set destination group & topic."),
+        Line::from("Press '3' to configure filters & download path."),
+        Line::from("Press 's' to start archive."),
+        Line::from("Press 'q' or Ctrl-C to quit."),
+    ];
 
-    let paragraph = Paragraph::new(content).block(block);
+    if let Some(err) = &app.home_error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                "Error: ",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(err, Style::default().fg(Color::Red)),
+        ]));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(paragraph, size);
 }
 
