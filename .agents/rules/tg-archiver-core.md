@@ -11,25 +11,26 @@ image, archive) from a public Telegram source channel to a topic inside a
 private destination group, with parallel downloads, configurable filters, and
 full pause/resume support across sessions.
 ```
-~/dev/tg-archiver/
-├── repo/
-│   ├── src/
-│   │   ├── main.rs              # Entry point — initialises runtime, TUI, app state
-│   │   ├── app/                 # Top-level App struct, event loop, state machine
-│   │   ├── tui/                 # ratatui widgets, layout, input handling
-│   │   ├── telegram/            # grammers-client wrappers (client init, channel/group resolution, media fetch/upload)
-│   │   ├── archive/             # Download scheduler, parallel worker pool, resume logic
-│   │   ├── config/              # Config struct, .env loading, validation
-│   │   ├── state/               # Persistent state (serde + JSON, saved to XDG state dir)
-│   │   └── error.rs             # Unified error type (anyhow + thiserror)
-│   ├── Cargo.toml
-│   ├── Cargo.lock               # Always committed
-│   ├── .env.example             # Committed — shows required keys with empty values
-│   ├── .env                     # Never committed — holds real credentials
-│   └── tests/                   # Integration tests
+~/dev/tg-archiver/              ← project root (NOT inside the repo)
 ├── .agents/
-│   ├── rules/                   # All project rule files
-│   └── tasks/                   # Task audit trail
+│   ├── rules/                  # all project rule files
+│   └── tasks/                  # task audit trail — ALL agent tasks write here, never inside repo/
+└── repo/                       ← git repository root
+    ├── src/
+    │   ├── main.rs             # entry point — initialises runtime, TUI, app state
+    │   ├── app/                # top-level App struct, event loop, state machine
+    │   ├── tui/                # ratatui widgets, layout, input handling
+    │   ├── telegram/           # grammers-client wrappers (client init, channel/group resolution, forward-as-copy)
+    │   ├── archive/            # forward-as-copy worker, chunked message scanning, cursor management
+    │   ├── config/             # config struct, .env loading, validation
+    │   ├── state/              # persistent state (serde + JSON, saved to XDG state dir)
+    │   └── error.rs            # unified error type (anyhow + thiserror)
+    ├── Cargo.toml
+    ├── Cargo.lock              # always committed
+    ├── .env.example            # committed — shows required keys with empty values
+    ├── .env                    # never committed — holds real credentials
+    └── tests/                  # integration tests
+
 ```
 
 **Language:** Rust (stable channel, minimum version pinned in `Cargo.toml` via `rust-version`).

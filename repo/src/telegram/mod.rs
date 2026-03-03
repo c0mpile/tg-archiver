@@ -300,9 +300,21 @@ impl TelegramClient {
             grammers_tl_types::enums::Updates::Updates(u) => {
                 let mut found_id = None;
                 for update in u.updates {
-                    if let grammers_tl_types::enums::Update::MessageId(m) = update {
-                        found_id = Some(m.id);
-                        break;
+                    use grammers_tl_types::enums::{Message, Update};
+                    match update {
+                        Update::NewMessage(m) => {
+                            if let Message::Service(s) = m.message {
+                                found_id = Some(s.id);
+                                break;
+                            }
+                        }
+                        Update::NewChannelMessage(m) => {
+                            if let Message::Service(s) = m.message {
+                                found_id = Some(s.id);
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 found_id
