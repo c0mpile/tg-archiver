@@ -37,14 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::fs::create_dir_all(&state_dir).await?;
 
-    let state = match state::State::load().await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to load previous state: {}", e);
-            eprintln!("To proceed, fix state.json or delete it to reset.");
-            std::process::exit(1);
-        }
-    };
+    let state = state::State::default();
 
     let app = App::new(config, state);
 

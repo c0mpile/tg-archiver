@@ -10,6 +10,7 @@ pub enum AppEvent {
     ChannelsLoaded(Result<Vec<(i64, String)>, String>),
     GroupsLoaded(Result<Vec<(i64, String)>, String>),
     TopicsLoaded(Result<Vec<(i32, String)>, String>),
+    ChannelStateLoaded(crate::state::State),
     FilterConfigNextField,
     FilterConfigPrevField,
     BeginEditField,
@@ -91,17 +92,11 @@ pub struct App {
 
 impl App {
     pub fn new(config: Config, state: State) -> Self {
-        let has_partial_state =
-            state.last_forwarded_message_id.is_some() && state.source_message_count.is_some();
         Self {
             config,
             state,
             should_quit: false,
-            active_view: if has_partial_state {
-                ActiveView::ResumePrompt
-            } else {
-                ActiveView::Home
-            },
+            active_view: ActiveView::Home,
             resolution_error: None,
             home_error: None,
             available_channels: Vec::new(),
@@ -239,22 +234,32 @@ impl App {
                             if let Some(i) = self.channel_list_state.selected()
                                 && let Some((id, title)) = self.available_channels.get(i)
                             {
-                                self.state.source_channel_id = Some(*id);
-                                self.state.source_channel_title = Some(title.clone());
-                                let state_clone = self.state.clone();
-                                tokio::spawn(async move {
-                                    let _ = state_clone.save().await;
-                                });
-                                self.active_view = ActiveView::GroupSelect;
-                                self.is_loading_groups = true;
-                                self.available_groups.clear();
-                                self.group_list_state.select(Some(0));
-                                let tg = Arc::clone(telegram);
+                                let new_id = *id;
+                                let title_clone = title.clone();
+                                let current_state = self.state.clone();
                                 let tx = tx.clone();
+                                
                                 tokio::spawn(async move {
-                                    let res =
-                                        tg.get_joined_groups().await.map_err(|e| e.to_string());
-                                    let _ = tx.send(AppEvent::GroupsLoaded(res)).await;
+                                    if current_state.source_channel_id == Some(new_id) {
+                                        // No-op reload
+                                        let _ = tx.send(AppEvent::ChannelStateLoaded(current_state)).await;
+                                        return;
+                                    }
+
+                                    if current_state.source_channel_id.is_some() {
+                                        let _ = current_state.save().await;
+                                    }
+
+                                    let mut new_state = match State::load_for_channel(new_id).await {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            let _ = tx.send(AppEvent::ArchiveError(format!("Failed to load state: {}", e))).await;
+                                            return;
+                                        }
+                                    };
+                                    new_state.source_channel_id = Some(new_id);
+                                    new_state.source_channel_title = Some(title_clone);
+                                    let _ = tx.send(AppEvent::ChannelStateLoaded(new_state)).await;
                                 });
                             }
                         }
@@ -495,6 +500,28 @@ impl App {
                     self.resolution_error = Some(err);
                 }
             },
+            AppEvent::ChannelStateLoaded(new_state) => {
+                self.state = new_state;
+
+                let has_partial_state =
+                    self.state.last_forwarded_message_id.is_some() && self.state.source_message_count.is_some();
+                
+                if has_partial_state {
+                    self.active_view = ActiveView::ResumePrompt;
+                } else {
+                    self.active_view = ActiveView::GroupSelect;
+                    self.is_loading_groups = true;
+                    self.available_groups.clear();
+                    self.group_list_state.select(Some(0));
+                    
+                    let tg = Arc::clone(telegram);
+                    let tx_clone = tx.clone();
+                    tokio::spawn(async move {
+                        let res = tg.get_joined_groups().await.map_err(|e| e.to_string());
+                        let _ = tx_clone.send(AppEvent::GroupsLoaded(res)).await;
+                    });
+                }
+            }
             AppEvent::FilterConfigNextField => {
                 let st = &mut self.filter_config_state;
                 st.error_message = None;

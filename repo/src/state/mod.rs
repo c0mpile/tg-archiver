@@ -25,18 +25,22 @@ pub struct State {
 }
 
 impl State {
-    pub async fn load() -> anyhow::Result<Self> {
-        let state_dir = std::env::var("XDG_STATE_HOME")
+    fn get_state_dir() -> std::path::PathBuf {
+        std::env::var("XDG_STATE_HOME")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
                 let home = std::env::var("HOME").expect("HOME env var not set");
                 std::path::PathBuf::from(home).join(".local/state")
             })
-            .join("tg-archiver");
+            .join("tg-archiver")
+    }
 
-        let state_file = state_dir.join("state.json");
+    pub async fn load_for_channel(source_channel_id: i64) -> anyhow::Result<Self> {
+        let state_dir = Self::get_state_dir();
+        let state_file = state_dir.join(format!("state-{}.json", source_channel_id));
 
         if !state_file.exists() {
+            // Note: The legacy `state.json` is intentionally ignored per project rules.
             return Ok(State::default());
         }
 
@@ -50,18 +54,19 @@ impl State {
     }
 
     pub async fn save(&self) -> anyhow::Result<()> {
-        let state_dir = std::env::var("XDG_STATE_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").expect("HOME env var not set");
-                std::path::PathBuf::from(home).join(".local/state")
-            })
-            .join("tg-archiver");
+        let source_channel_id = match self.source_channel_id {
+            Some(id) => id,
+            None => {
+                eprintln!("State::save called with no source_channel_id, skipping save");
+                return Ok(());
+            }
+        };
 
+        let state_dir = Self::get_state_dir();
         fs::create_dir_all(&state_dir).await?;
 
-        let state_file = state_dir.join("state.json");
-        let tmp_file = state_dir.join("state.json.tmp");
+        let state_file = state_dir.join(format!("state-{}.json", source_channel_id));
+        let tmp_file = state_dir.join(format!("state-{}.json.tmp", source_channel_id));
 
         let content = serde_json::to_string_pretty(self)?;
         fs::write(&tmp_file, content).await?;
@@ -87,6 +92,26 @@ mod tests {
         let deserialized: State = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(state, deserialized);
+    }
+
+    #[tokio::test]
+    async fn test_load_save() {
+        let temp_dir = std::env::temp_dir().join("tg-archiver-test");
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", &temp_dir);
+        }
+
+        let mut state = State::default();
+        state.source_channel_id = Some(9999);
+        state.post_count_threshold = 1000;
+        
+        state.save().await.unwrap();
+
+        let loaded = State::load_for_channel(9999).await.unwrap();
+        assert_eq!(state, loaded);
+
+        // cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 
     #[test]
