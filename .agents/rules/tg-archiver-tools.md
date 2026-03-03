@@ -36,16 +36,22 @@ trigger: always_on
   the user via the TUI and offer to reset to clean state. Never panic or
   silently overwrite without user confirmation.
 
-Persisted state must include at minimum:
-- Resolved source channel ID and title
-- Resolved destination group ID, topic ID, and titles
-- Active filter configuration (file types, min size, post count threshold)
-- Per-file download status: `Pending | InProgress { bytes_received } | Complete | Failed { reason } | Skipped`
-- Message ID cursor (highest source message ID already processed)
-- Local download destination path
+Persisted state must include at minimum (`State` struct fields):
+- `source_channel_id`
+- `source_channel_title`
+- `dest_group_id`
+- `dest_topic_id`
+- `dest_group_title`
+- `dest_topic_title`
+- `post_count_threshold`
+- `last_forwarded_message_id`
+- `source_message_count`
+- `auto_create_topic`
+
+Per-channel state files are stored at `state-{id}.json`. In addition, a `LastSession` struct and corresponding `last_session.json` pointer file track the ID of the most recently active channel.
 
 TUI-ephemeral state (cursor positions, selected indices, input field buffers)
-lives on the `App` struct and is **not** written to `state.json`.
+lives on the `App` struct and is **not** written to disk.
 
 ---
 
@@ -55,14 +61,13 @@ lives on the `App` struct and is **not** written to `state.json`.
   render or input-handling path is prohibited — offload all async work to
   spawned tasks that send `AppEvent` messages back to the main loop.
 - Minimum required views:
-  - Source selection (channel picker with search)
-  - Filter configuration (file types, min size, post count threshold)
-  - Destination selection (group picker → topic picker)
-  - Description option toggle
-  - Local download path input
-  - Archive progress view (per-file status, overall progress bar, active
-    download count, pause/resume control)
-  - Log/error panel
+  - `Home`
+  - `ChannelSelect`
+  - `GroupSelect`
+  - `TopicSelect`
+  - `FilterConfig`
+  - `ArchiveProgress` (features a scrollable log panel leveraging the `ArchiveLogLine` struct, auto-scroll behaviour, PageUp/PageDown navigation, and completion state handling)
+  - `ResumePrompt`
 
 ---
 
@@ -73,6 +78,12 @@ lives on the `App` struct and is **not** written to `state.json`.
   missing, continue silently (variables may be set in the shell environment).
 - If a required variable is absent after loading, call
   `std::process::exit(1)` with a message that names the missing key exactly.
+
+---
+
+## Raw TL API Calls
+
+- `forward_messages_as_copy`
 
 ---
 
