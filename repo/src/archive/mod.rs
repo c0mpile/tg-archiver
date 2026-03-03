@@ -12,8 +12,14 @@ pub fn start_archive_run(
 ) {
     tokio::spawn(async move {
         if let Err(e) = run_archive_loop(state, telegram_client, tx.clone(), pause_flag).await {
+            let _ = tx.send(AppEvent::ArchiveLog(format!("Error: {}", e))).await;
             let _ = tx.send(AppEvent::ArchiveError(e.to_string())).await;
         } else {
+            let _ = tx
+                .send(AppEvent::ArchiveLog(
+                    "✓ Archive complete. Channel is up to date.".to_string(),
+                ))
+                .await;
             let _ = tx.send(AppEvent::ArchiveComplete).await;
         }
     });
@@ -69,6 +75,19 @@ async fn run_archive_loop(
         None => 1,
     };
 
+    let _ = tx
+        .send(AppEvent::ArchiveStarted {
+            start_id,
+            highest_msg_id,
+        })
+        .await;
+    let _ = tx
+        .send(AppEvent::ArchiveLog(format!(
+            "Starting archive: messages {} → {}",
+            start_id, highest_msg_id
+        )))
+        .await;
+
     if start_id > highest_msg_id {
         return Ok(()); // Nothing to do
     }
@@ -93,7 +112,8 @@ async fn run_archive_loop(
         let messages = crate::retry_flood_wait!(
             telegram_client
                 .client
-                .get_messages_by_id(input_peer_source.clone(), &ids)
+                .get_messages_by_id(input_peer_source.clone(), &ids),
+            Some(tx.clone())
         )?;
 
         let mut valid_msg_ids = Vec::new();
@@ -115,8 +135,24 @@ async fn run_archive_loop(
                     &input_peer_dest,
                     &valid_msg_ids,
                     state.dest_topic_id,
+                    Some(tx.clone()),
                 )
                 .await?;
+            let _ = tx
+                .send(AppEvent::ArchiveLog(format!(
+                    "Forwarded {} messages (IDs {}–{})",
+                    valid_msg_ids.len(),
+                    current_start,
+                    current_end
+                )))
+                .await;
+        } else {
+            let _ = tx
+                .send(AppEvent::ArchiveLog(format!(
+                    "Skipped chunk {}–{} (no valid messages)",
+                    current_start, current_end
+                )))
+                .await;
         }
 
         // Update state and UI

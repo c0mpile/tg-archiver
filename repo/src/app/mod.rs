@@ -23,6 +23,8 @@ pub enum AppEvent {
     StartArchiveRun,
     ArchiveComplete,
     ArchiveError(String),
+    ArchiveLog(String),
+    ArchiveStarted { start_id: i32, highest_msg_id: i32 },
     SaveCursor(i32),
     TogglePause,
     PromptResumeResult(bool),
@@ -70,6 +72,21 @@ pub struct FilterConfigState {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ArchiveLogLine {
+    pub timestamp: String,
+    pub msg: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ArchiveProgressState {
+    pub logs: Vec<ArchiveLogLine>,
+    pub start_id: i32,
+    pub highest_msg_id: i32,
+    pub completed: bool,
+    pub scroll_offset: usize,
+}
+
 pub struct App {
     #[allow(dead_code)]
     pub config: Config,
@@ -87,6 +104,7 @@ pub struct App {
     pub available_topics: Vec<(i32, String)>,
     pub topic_list_state: ratatui::widgets::ListState,
     pub filter_config_state: FilterConfigState,
+    pub archive_progress_state: ArchiveProgressState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
     pub channel_loading: bool,
 }
@@ -109,6 +127,7 @@ impl App {
             available_topics: Vec::new(),
             topic_list_state: ratatui::widgets::ListState::default(),
             filter_config_state: FilterConfigState::default(),
+            archive_progress_state: ArchiveProgressState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             channel_loading: false,
         }
@@ -444,8 +463,37 @@ impl App {
                     ActiveView::ArchiveProgress => match key.code {
                         crossterm::event::KeyCode::Char('p')
                         | crossterm::event::KeyCode::Char(' ') => {
-                            let tx = tx.clone();
-                            let _ = tx.try_send(AppEvent::TogglePause);
+                            if !self.archive_progress_state.completed {
+                                let tx = tx.clone();
+                                let _ = tx.try_send(AppEvent::TogglePause);
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('q') => {
+                            if self.archive_progress_state.completed {
+                                self.home_error = None;
+                                self.active_view = ActiveView::Home;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('r') => {
+                            if self.archive_progress_state.completed {
+                                let tx = tx.clone();
+                                let _ = tx.try_send(AppEvent::StartArchiveRun);
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if self.archive_progress_state.scroll_offset > 0 {
+                                self.archive_progress_state.scroll_offset -= 1;
+                            }
+                        }
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            self.archive_progress_state.scroll_offset += 1;
+                        }
+                        crossterm::event::KeyCode::PageUp => {
+                            self.archive_progress_state.scroll_offset =
+                                self.archive_progress_state.scroll_offset.saturating_sub(10);
+                        }
+                        crossterm::event::KeyCode::PageDown => {
+                            self.archive_progress_state.scroll_offset += 10;
                         }
                         crossterm::event::KeyCode::Char('c')
                             if key
@@ -604,6 +652,7 @@ impl App {
             }
             AppEvent::StartArchiveRun => {
                 self.active_view = ActiveView::ArchiveProgress;
+                self.archive_progress_state = ArchiveProgressState::default();
 
                 let mut state_clone = self.state.clone();
                 let tg_clone = Arc::clone(telegram);
@@ -659,6 +708,23 @@ impl App {
                     });
                 }
             }
+            AppEvent::ArchiveStarted {
+                start_id,
+                highest_msg_id,
+            } => {
+                self.archive_progress_state.start_id = start_id;
+                self.archive_progress_state.highest_msg_id = highest_msg_id;
+            }
+            AppEvent::ArchiveLog(msg) => {
+                let timestamp = chrono::Local::now().format("%H:%M:%S").to_string();
+                self.archive_progress_state
+                    .logs
+                    .push(ArchiveLogLine { timestamp, msg });
+
+                // Auto-scroll logic: if user is not scrolled up, keep them at the bottom.
+                // We'll reset scroll_offset to max length so the view ensures it sticks to the bottom.
+                self.archive_progress_state.scroll_offset = usize::MAX;
+            }
             AppEvent::SaveCursor(cursor) => {
                 self.state.last_forwarded_message_id = Some(cursor);
                 let state_clone = self.state.clone();
@@ -667,6 +733,7 @@ impl App {
                 });
             }
             AppEvent::ArchiveComplete => {
+                self.archive_progress_state.completed = true;
                 let state_clone = self.state.clone();
                 tokio::spawn(async move {
                     let _ = state_clone.save().await;
@@ -696,6 +763,7 @@ impl App {
             AppEvent::PromptResumeResult(resume) => {
                 if resume {
                     self.active_view = ActiveView::ArchiveProgress;
+                    self.archive_progress_state = ArchiveProgressState::default();
                     let state_clone = self.state.clone();
                     let tg_clone = Arc::clone(telegram);
                     let tx_clone = tx.clone();

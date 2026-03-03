@@ -341,6 +341,7 @@ impl TelegramClient {
         to_peer: &grammers_tl_types::enums::InputPeer,
         msg_ids: &[i32],
         topic_id: Option<i32>,
+        tx: Option<tokio::sync::mpsc::Sender<crate::app::AppEvent>>,
     ) -> Result<()> {
         use grammers_tl_types::functions::messages::ForwardMessages;
         let base_micros = std::time::SystemTime::now()
@@ -377,7 +378,7 @@ impl TelegramClient {
             suggested_post: None,
         };
 
-        let _res = crate::retry_flood_wait!(self.client.invoke(&req))
+        let _res = crate::retry_flood_wait!(self.client.invoke(&req), tx)
             .context("Failed to forward messages as copy")?;
 
         Ok(())
@@ -388,7 +389,13 @@ impl TelegramClient {
 /// It catches `grammers_mtsender::InvocationError::Rpc` with `FLOOD_WAIT_X`.
 #[macro_export]
 macro_rules! retry_flood_wait {
-    ($client_call:expr) => {{
+    ($client_call:expr) => {
+        $crate::retry_flood_wait!(
+            $client_call,
+            None::<tokio::sync::mpsc::Sender<$crate::app::AppEvent>>
+        )
+    };
+    ($client_call:expr, $tx:expr) => {{
         let mut retried = false;
         loop {
             match $client_call.await {
@@ -422,6 +429,14 @@ macro_rules! retry_flood_wait {
                             break Err(anyhow::anyhow!($crate::error::AppError::FloodWait(
                                 std::time::Duration::from_secs(wait_sec)
                             )));
+                        }
+                        if let Some(ref sender) = $tx {
+                            let _ = sender
+                                .send($crate::app::AppEvent::ArchiveLog(format!(
+                                    "Flood wait: sleeping {}s...",
+                                    wait_sec
+                                )))
+                                .await;
                         }
                         let delay = wait_sec + 2;
                         tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;

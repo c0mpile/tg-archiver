@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Paragraph},
 };
 
@@ -34,38 +34,52 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     f.render_widget(title, chunks[0]);
 
-    // Active Status
-    let total = app.state.source_message_count.unwrap_or(0);
+    // Console Log Block
+    let log_lines: Vec<Line> = app
+        .archive_progress_state
+        .logs
+        .iter()
+        .map(|log| Line::from(format!("[{}] {}", log.timestamp, log.msg)))
+        .collect();
 
-    // We can't really track detailed progress anymore easily without traversing msg ids,
-    // so we'll just show the last forwarded msg id.
-    let current_id = app.state.last_forwarded_message_id.unwrap_or(0);
+    let logs_len = log_lines.len();
+    let visible_height = chunks[1].height.saturating_sub(2) as usize;
+    let max_offset = logs_len.saturating_sub(visible_height);
+    let scroll_offset = app.archive_progress_state.scroll_offset.min(max_offset);
 
-    let info = vec![
-        Line::from(vec![
-            Span::styled(
-                "Highest Source Message ID: ",
-                Style::default().fg(Color::Yellow),
-            ),
-            Span::raw(total.to_string()),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                "Last Forwarded Message ID: ",
-                Style::default().fg(Color::Green),
-            ),
-            Span::raw(current_id.to_string()),
-        ]),
-    ];
+    let log_widget = Paragraph::new(log_lines)
+        .block(Block::default().title("Activity Log").borders(Borders::ALL))
+        .scroll((scroll_offset as u16, 0));
 
-    let info_widget =
-        Paragraph::new(info).block(Block::default().title("Job Status").borders(Borders::ALL));
-    f.render_widget(info_widget, chunks[1]);
+    f.render_widget(log_widget, chunks[1]);
 
     // Summary Footer
-    let summary = format!("Forwarded ID: {} / {}", current_id, total);
-    let footer = Paragraph::new(summary)
-        .style(Style::default().fg(Color::Green))
+    let current_id = app.state.last_forwarded_message_id.unwrap_or(0);
+    let highest_id = app.archive_progress_state.highest_msg_id;
+
+    let footer_text = if app.archive_progress_state.completed {
+        "Complete — all messages forwarded. Press 'q' to return to main menu or 'r' to run again."
+            .to_string()
+    } else {
+        let percent = if highest_id > 0 {
+            (current_id as f64 / highest_id as f64 * 100.0).clamp(0.0, 100.0) as u32
+        } else {
+            0
+        };
+        format!(
+            "Forwarded up to ID: {} / {}  [{}%]",
+            current_id, highest_id, percent
+        )
+    };
+
+    let footer_color = if app.archive_progress_state.completed {
+        Color::Cyan
+    } else {
+        Color::Green
+    };
+
+    let footer = Paragraph::new(footer_text)
+        .style(Style::default().fg(footer_color))
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);
 }
