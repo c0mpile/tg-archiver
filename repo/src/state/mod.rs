@@ -76,6 +76,46 @@ impl State {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
+pub struct LastSession {
+    #[serde(default)]
+    pub last_channel_id: Option<i64>,
+}
+
+impl LastSession {
+    pub async fn load() -> anyhow::Result<Self> {
+        let state_dir = State::get_state_dir();
+        let session_file = state_dir.join("last_session.json");
+
+        if !session_file.exists() {
+            return Ok(LastSession::default());
+        }
+
+        let content = fs::read_to_string(&session_file).await?;
+        match serde_json::from_str::<LastSession>(&content) {
+            Ok(session) => Ok(session),
+            Err(e) => {
+                eprintln!("Warning: last_session.json deserialisation failed: {}", e);
+                Ok(LastSession::default())
+            }
+        }
+    }
+
+    pub async fn save(&self) -> anyhow::Result<()> {
+        let state_dir = State::get_state_dir();
+        fs::create_dir_all(&state_dir).await?;
+
+        let session_file = state_dir.join("last_session.json");
+        let tmp_file = state_dir.join("last_session.json.tmp");
+
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write(&tmp_file, content).await?;
+        fs::rename(tmp_file, session_file).await?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +172,25 @@ mod tests {
         assert_eq!(state.post_count_threshold, 0); // Since it was moved out of filters and defaults to 0
         assert_eq!(state.last_forwarded_message_id, None);
         assert_eq!(state.auto_create_topic, false);
+    }
+
+    #[tokio::test]
+    async fn test_last_session_load_save() {
+        let temp_dir = std::env::temp_dir().join("tg-archiver-session-test");
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", &temp_dir);
+        }
+
+        let session = LastSession {
+            last_channel_id: Some(123456789),
+        };
+        
+        session.save().await.unwrap();
+
+        let loaded = LastSession::load().await.unwrap();
+        assert_eq!(session, loaded);
+
+        // cleanup
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

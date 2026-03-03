@@ -503,6 +503,15 @@ impl App {
             AppEvent::ChannelStateLoaded(new_state) => {
                 self.state = new_state;
 
+                if let Some(channel_id) = self.state.source_channel_id {
+                    let session = crate::state::LastSession {
+                        last_channel_id: Some(channel_id),
+                    };
+                    tokio::spawn(async move {
+                        let _ = session.save().await;
+                    });
+                }
+
                 let has_partial_state =
                     self.state.last_forwarded_message_id.is_some() && self.state.source_message_count.is_some();
                 

@@ -37,9 +37,24 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::fs::create_dir_all(&state_dir).await?;
 
-    let state = state::State::default();
+    let mut state = state::State::default();
+    let mut initial_view = None;
 
-    let app = App::new(config, state);
+    if let Ok(last_session) = state::LastSession::load().await {
+        if let Some(channel_id) = last_session.last_channel_id {
+            if let Ok(loaded_state) = state::State::load_for_channel(channel_id).await {
+                state = loaded_state;
+                if state.last_forwarded_message_id.is_some() {
+                    initial_view = Some(app::ActiveView::ResumePrompt);
+                }
+            }
+        }
+    }
+
+    let mut app = App::new(config, state);
+    if let Some(view) = initial_view {
+        app.active_view = view;
+    }
 
     // Initialise Telegram client and perform auth if necessary
     // This happens before TUI setup to avoid conflicts with raw terminal mode
