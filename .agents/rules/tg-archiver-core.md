@@ -107,11 +107,9 @@ to match on (e.g. `FloodWait`, `AuthRequired`, `SessionExpired`). Never use
 |---|---|
 | `grammers-client` | Telegram MTProto client |
 | `grammers-session` | Session persistence backend for grammers |
-| `grammers-tl-types` | Raw Type Language structs for manual API calls |
 | `tokio` | Async runtime (`features = ["full"]`) |
 | `ratatui` | TUI framework |
 | `crossterm` | Terminal backend for ratatui |
-| `chrono` | Date and time handling for logs and UI |
 | `serde` / `serde_json` | State serialisation |
 | `dotenvy` | `.env` loading |
 | `anyhow` | Error propagation |
@@ -138,8 +136,8 @@ Repository is **private**.
 | Scope | Covers |
 |---|---|
 | `tui` | ratatui widgets, layout, input |
-| `telegram` | grammers-client wrappers, raw TL API calls, flood-wait retry macro |
-| `archive` | forward-as-copy worker, chunked message scanning, cursor management |
+| `telegram` | grammers client wrappers, flood-wait handling |
+| `archive` | Download scheduler, worker pool, upload logic |
 | `state` | Persistent state serialisation/deserialisation |
 | `config` | Config struct, `.env` loading |
 | `app` | App struct, event loop, state machine |
