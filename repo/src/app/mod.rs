@@ -178,7 +178,15 @@ impl App {
                                 missing.push("Destination Group");
                             }
                             if self.state.dest_topic_id.is_none() {
-                                missing.push("Destination Topic");
+                                let is_auto = self
+                                    .state
+                                    .dest_topic_title
+                                    .as_deref()
+                                    .map(|t| t.starts_with("[Auto-create topic:"))
+                                    .unwrap_or(false);
+                                if !is_auto {
+                                    missing.push("Destination Topic");
+                                }
                             }
 
                             if !missing.is_empty() {
@@ -358,8 +366,13 @@ impl App {
                                 if i == 0 {
                                     // "Create new topic automatically"
                                     self.state.dest_topic_id = None;
+                                    let channel_title = self
+                                        .state
+                                        .source_channel_title
+                                        .as_deref()
+                                        .unwrap_or("Archive");
                                     self.state.dest_topic_title =
-                                        Some("<Create Automatically>".to_string());
+                                        Some(format!("[Auto-create topic: {}]", channel_title));
                                 } else if let Some((id, title)) = self.available_topics.get(i - 1) {
                                     self.state.dest_topic_id = Some(*id);
                                     self.state.dest_topic_title = Some(title.clone());
@@ -574,15 +587,16 @@ impl App {
 
                         // Handle automatic topic creation
                         if state_clone.dest_topic_id.is_none()
-                            && state_clone.dest_topic_title.as_deref()
-                                == Some("<Create Automatically>")
-                            && let Some(channel_title) = &state_clone.source_channel_title
+                            && let Some(title_str) = state_clone.dest_topic_title.as_deref()
+                            && title_str.starts_with("[Auto-create topic: ")
+                            && title_str.ends_with(']')
                             && let Some(group_id) = state_clone.dest_group_id
                         {
-                            match tg_clone.create_topic(group_id, channel_title).await {
+                            let topic_title = &title_str[20..title_str.len() - 1];
+                            match tg_clone.create_topic(group_id, topic_title).await {
                                 Ok(new_topic_id) => {
                                     state_clone.dest_topic_id = Some(new_topic_id);
-                                    state_clone.dest_topic_title = Some(channel_title.clone());
+                                    state_clone.dest_topic_title = Some(topic_title.to_string());
                                     let s_clone = state_clone.clone();
                                     let _ = s_clone.save().await;
                                 }

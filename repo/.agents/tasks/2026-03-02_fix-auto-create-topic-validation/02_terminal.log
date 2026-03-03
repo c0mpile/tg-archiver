@@ -1,0 +1,34 @@
+# Terminal Log - fix-auto-create-topic-validation
+
+$ fd . src
+src/app/mod.rs
+src/archive/mod.rs
+src/config/mod.rs
+src/error.rs
+src/main.rs
+src/state/mod.rs
+src/telegram/mod.rs
+src/tui/mod.rs
+
+$ rg StartArchiveRun src
+src/app/mod.rs:    StartArchiveRun,
+src/app/mod.rs:                            let _ = tx.try_send(AppEvent::StartArchiveRun);
+src/app/mod.rs:            AppEvent::StartArchiveRun => {
+
+$ cargo clippy -- -D warnings
+   Checking tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+
+$ cargo fmt -- --check
+Diff in /home/kevin/dev/tg-archiver/repo/src/app/mod.rs:178:
+... formatting diff ...
+
+$ cargo fmt && cargo test && cargo build --release
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s
+     Running unittests src/main.rs (target/debug/deps/tg_archiver-37dc63caa47ad166)
+running 3 tests
+test telegram::tests::test_init_telegram_client ... ignored
+test state::tests::test_migration_compatibility ... ok
+test state::tests::test_round_trip ... ok
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+    Finished `release` profile [optimized] target(s) in 3.01s
