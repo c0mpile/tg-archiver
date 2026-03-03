@@ -238,11 +238,13 @@ impl App {
                                 let title_clone = title.clone();
                                 let current_state = self.state.clone();
                                 let tx = tx.clone();
-                                
+
                                 tokio::spawn(async move {
                                     if current_state.source_channel_id == Some(new_id) {
                                         // No-op reload
-                                        let _ = tx.send(AppEvent::ChannelStateLoaded(current_state)).await;
+                                        let _ = tx
+                                            .send(AppEvent::ChannelStateLoaded(current_state))
+                                            .await;
                                         return;
                                     }
 
@@ -250,10 +252,16 @@ impl App {
                                         let _ = current_state.save().await;
                                     }
 
-                                    let mut new_state = match State::load_for_channel(new_id).await {
+                                    let mut new_state = match State::load_for_channel(new_id).await
+                                    {
                                         Ok(s) => s,
                                         Err(e) => {
-                                            let _ = tx.send(AppEvent::ArchiveError(format!("Failed to load state: {}", e))).await;
+                                            let _ = tx
+                                                .send(AppEvent::ArchiveError(format!(
+                                                    "Failed to load state: {}",
+                                                    e
+                                                )))
+                                                .await;
                                             return;
                                         }
                                     };
@@ -512,9 +520,9 @@ impl App {
                     });
                 }
 
-                let has_partial_state =
-                    self.state.last_forwarded_message_id.is_some() && self.state.source_message_count.is_some();
-                
+                let has_partial_state = self.state.last_forwarded_message_id.is_some()
+                    && self.state.source_message_count.is_some();
+
                 if has_partial_state {
                     self.active_view = ActiveView::ResumePrompt;
                 } else {
@@ -522,7 +530,7 @@ impl App {
                     self.is_loading_groups = true;
                     self.available_groups.clear();
                     self.group_list_state.select(Some(0));
-                    
+
                     let tg = Arc::clone(telegram);
                     let tx_clone = tx.clone();
                     tokio::spawn(async move {

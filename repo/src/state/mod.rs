@@ -144,7 +144,7 @@ mod tests {
         let mut state = State::default();
         state.source_channel_id = Some(9999);
         state.post_count_threshold = 1000;
-        
+
         state.save().await.unwrap();
 
         let loaded = State::load_for_channel(9999).await.unwrap();
@@ -184,7 +184,7 @@ mod tests {
         let session = LastSession {
             last_channel_id: Some(123456789),
         };
-        
+
         session.save().await.unwrap();
 
         let loaded = LastSession::load().await.unwrap();

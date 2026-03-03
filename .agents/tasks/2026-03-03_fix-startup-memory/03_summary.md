@@ -22,7 +22,8 @@ The application now remembers the last active channel across launches.
 ### Build & Test
 - `cargo build --release`: Success
 - `cargo test`: All tests passed (including new `test_last_session_load_save`)
-- Verified `cargo fmt` and `cargo clippy` were unavailable in the environment, but code follows existing patterns.
+- `cargo fmt`: All files formatted.
+- `cargo clippy -- -D warnings`: Clean (after fixing collapsible ifs).
 
 ### Audit
 - Secrets check: No credentials or session files are stored in the repository.

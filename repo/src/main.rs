@@ -40,14 +40,13 @@ async fn main() -> anyhow::Result<()> {
     let mut state = state::State::default();
     let mut initial_view = None;
 
-    if let Ok(last_session) = state::LastSession::load().await {
-        if let Some(channel_id) = last_session.last_channel_id {
-            if let Ok(loaded_state) = state::State::load_for_channel(channel_id).await {
-                state = loaded_state;
-                if state.last_forwarded_message_id.is_some() {
-                    initial_view = Some(app::ActiveView::ResumePrompt);
-                }
-            }
+    if let Ok(last_session) = state::LastSession::load().await
+        && let Some(channel_id) = last_session.last_channel_id
+        && let Ok(loaded_state) = state::State::load_for_channel(channel_id).await
+    {
+        state = loaded_state;
+        if state.last_forwarded_message_id.is_some() {
+            initial_view = Some(app::ActiveView::ResumePrompt);
         }
     }
 
