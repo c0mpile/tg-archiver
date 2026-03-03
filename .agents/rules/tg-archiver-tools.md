@@ -23,29 +23,33 @@ trigger: always_on
 
 ---
 
-## Persistent State (`~/.local/state/tg-archiver/state.json`)
+## Persistent State (`~/.local/state/tg-archiver/state.json` and others)
 
 - The state directory must be created with `tokio::fs::create_dir_all` at
   startup if it does not exist.
-- **Atomic writes only:** write to `~/.local/state/tg-archiver/state.json.tmp`
-  first, then `tokio::fs::rename` over `state.json`. Never write directly to
-  `state.json` in-place.
+- **Atomic writes only:** write to `<path>.tmp` first, then `tokio::fs::rename` over the target.
 - State schema changes must use `#[serde(default)]` on all new fields so that
   existing state files deserialise without error.
-- If `state.json` fails to deserialise (corrupt or incompatible schema), warn
-  the user via the TUI and offer to reset to clean state. Never panic or
-  silently overwrite without user confirmation.
+- If a state file fails to deserialise (corrupt or incompatible schema), warn
+  the user via the TUI and offer to reset to clean state.
 
-Persisted state must include at minimum:
-- Resolved source channel ID and title
-- Resolved destination group ID, topic ID, and titles
-- Active filter configuration (file types, min size, post count threshold)
-- Per-file download status: `Pending | InProgress { bytes_received } | Complete | Failed { reason } | Skipped`
-- Message ID cursor (highest source message ID already processed)
-- Local download destination path
+Persisted state (`State` struct) includes:
+- `source_channel_id` (Option<i64>)
+- `source_channel_title` (String)
+- `dest_group_id` (Option<i64>)
+- `dest_group_title` (String)
+- `dest_topic_id` (Option<i32>)
+- `dest_topic_title` (String)
+- `auto_create_topic` (bool)
+- `last_forwarded_message_id` (Option<i32>)
+- `post_count_threshold` (u32)
+
+Additionally:
+- A `LastSession` struct and `last_session.json` pointer file exist to track the most recently active channel.
+- Per-channel state is stored at `state-{id}.json`.
 
 TUI-ephemeral state (cursor positions, selected indices, input field buffers)
-lives on the `App` struct and is **not** written to `state.json`.
+lives on the `App` struct and is **not** written to disk.
 
 ---
 
@@ -55,14 +59,20 @@ lives on the `App` struct and is **not** written to `state.json`.
   render or input-handling path is prohibited — offload all async work to
   spawned tasks that send `AppEvent` messages back to the main loop.
 - Minimum required views:
-  - Source selection (channel picker with search)
-  - Filter configuration (file types, min size, post count threshold)
-  - Destination selection (group picker → topic picker)
-  - Description option toggle
-  - Local download path input
-  - Archive progress view (per-file status, overall progress bar, active
-    download count, pause/resume control)
+  - ChannelSelect (source selection with search)
+  - GroupSelect (destination group selection)
+  - TopicSelect (destination topic selection)
+  - FilterConfig (configuration like post count threshold)
+  - ArchiveProgress (scrollable log panel with ArchiveLogLine entries, auto-scroll, PageUp/PageDown navigation, completion state)
   - Log/error panel
+
+---
+
+## Raw TL API Calls
+
+- `forward_messages_as_copy` and `create_topic` both use `self.client.invoke(&req)` with raw `grammers_tl_types::functions` structs.
+- All raw TL invocations must be wrapped in `retry_flood_wait!`.
+- New TL functions must be verified against the grammers 0.9.0 `grammers-tl-types` crate before use.
 
 ---
 
@@ -84,7 +94,7 @@ the global checklist:
 - [ ] `cargo fmt -- --check` exits 0
 - [ ] `cargo clippy -- -D warnings` exits 0
 - [ ] `cargo build --release` exits 0
-- [ ] `cargo test` exits 0 (all non-`#[ignore]` tests pass)
+- [ ] `cargo test -- --test-threads=1` exits 0 (all non-`#[ignore]` tests pass)
 - [ ] No `.env`, `*.session`, or credential values in staged files
 - [ ] Any new persisted state fields use `#[serde(default)]`
 - [ ] Any new Telegram API call site is wrapped in the flood-wait retry helper in `src/telegram/`

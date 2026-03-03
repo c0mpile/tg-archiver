@@ -43,42 +43,24 @@ set of tasks.
 
 ---
 
-## File Type Filtering
+## Forward-as-Copy Worker
 
-Supported categories and their grammers media variant mappings:
-
-| Category | grammers type |
-|---|---|
-| Video | `Media::Document` with MIME `video/*` |
-| Audio | `Media::Document` with MIME `audio/*`, or `Media::Audio` |
-| Image | `Media::Photo`, or `Media::Document` with MIME `image/*` |
-| Archive | `Media::Document` with MIME `application/zip`, `application/x-rar-compressed`, `application/x-7z-compressed`, `application/gzip`, `application/x-tar` |
-
-The user must be able to select any combination of these four categories.
-Filtering happens at message-scan time, before any download is attempted.
+- Chunk size is 100 messages via `get_messages_by_id`.
+- Service message skip heuristic: `text().trim().is_empty() && media().is_none()`.
+- `random_id` must be `base_micros + i as i64` via enumerate — never duplicated within a batch.
+- 500ms inter-chunk delay.
+- Cursor updated to `current_end` after each chunk.
+- `auto_create_topic: bool` on State triggers `create_topic()` before the run starts and is reset to `false` after.
 
 ---
 
-## Minimum File Size Threshold
+## Peer Cache
 
-Applied to `Document` types only (photos and audio do not expose byte size
-reliably via grammers). Compare `document.size()` against the user-configured
-minimum. Skip the file silently — record status as `Skipped`, not `Failed` —
-if below threshold.
+Both source and dest peers must be in the peer cache before `start_archive_run` is called.
 
 ---
 
-## Description Heuristic
+## Known Technical Debt
 
-When the "include text descriptions" option is enabled, apply this logic per
-media file in the source channel:
-
-1. If the same message that contains the media file also contains non-empty
-   message text → that text is the description.
-2. Otherwise, if the message immediately preceding the media message (by
-   message ID) contains only text (no media) → that text is the description.
-3. Otherwise → no description.
-
-Descriptions are saved to disk as `<filename-without-extension>.txt` alongside
-the media file in the local download destination. Descriptions are prepended
-to the upload caption when posting to the destination topic.
+1. `retry_flood_wait!` macro accepts an optional `Sender<AppEvent>` to emit flood-wait log lines — this couples the telegram layer to app events and should be refactored to return the wait duration at the call site before monitoring mode is built.
+2. State tests use `unsafe { std::env::set_var }` causing races under parallel test execution — run `cargo test -- --test-threads=1` until this is fixed.
