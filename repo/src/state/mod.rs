@@ -20,6 +20,8 @@ pub struct State {
     pub last_forwarded_message_id: Option<i32>,
     #[serde(default)]
     pub source_message_count: Option<i32>,
+    #[serde(default)]
+    pub auto_create_topic: bool,
 }
 
 impl State {
@@ -79,6 +81,7 @@ mod tests {
         state.post_count_threshold = 1000;
         state.last_forwarded_message_id = Some(123);
         state.source_message_count = Some(150);
+        state.auto_create_topic = true;
 
         let serialized = serde_json::to_string(&state).unwrap();
         let deserialized: State = serde_json::from_str(&serialized).unwrap();
@@ -103,5 +106,6 @@ mod tests {
         assert_eq!(state.source_channel_id, Some(12345));
         assert_eq!(state.post_count_threshold, 0); // Since it was moved out of filters and defaults to 0
         assert_eq!(state.last_forwarded_message_id, None);
+        assert_eq!(state.auto_create_topic, false);
     }
 }

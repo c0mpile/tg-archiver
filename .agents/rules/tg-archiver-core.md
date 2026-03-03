@@ -6,6 +6,12 @@ trigger: always_on
 
 ## 1. Workspace Context
 
+> **TASK AUDIT TRAIL LOCATION — MANDATORY:** All task directories (`YYYY-MM-DD_task-slug/`) 
+> must be created at `~/dev/tg-archiver/.agents/tasks/`. This path is outside the git 
+> repository. Never create task artifacts under `~/dev/tg-archiver/repo/` or any subdirectory 
+> of it. The git repo root is `~/dev/tg-archiver/repo/` — `.agents/` is a sibling of `repo/`, 
+> not a child of it.
+
 `tg-archiver` is a terminal application that mirrors media files (video, audio,
 image, archive) from a public Telegram source channel to a topic inside a
 private destination group, with parallel downloads, configurable filters, and

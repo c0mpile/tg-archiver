@@ -177,16 +177,8 @@ impl App {
                             if self.state.dest_group_id.is_none() {
                                 missing.push("Destination Group");
                             }
-                            if self.state.dest_topic_id.is_none() {
-                                let is_auto = self
-                                    .state
-                                    .dest_topic_title
-                                    .as_deref()
-                                    .map(|t| t.starts_with("[Auto-create topic:"))
-                                    .unwrap_or(false);
-                                if !is_auto {
-                                    missing.push("Destination Topic");
-                                }
+                            if self.state.dest_topic_id.is_none() && !self.state.auto_create_topic {
+                                missing.push("Destination Topic");
                             }
 
                             if !missing.is_empty() {
@@ -366,16 +358,12 @@ impl App {
                                 if i == 0 {
                                     // "Create new topic automatically"
                                     self.state.dest_topic_id = None;
-                                    let channel_title = self
-                                        .state
-                                        .source_channel_title
-                                        .as_deref()
-                                        .unwrap_or("Archive");
-                                    self.state.dest_topic_title =
-                                        Some(format!("[Auto-create topic: {}]", channel_title));
+                                    self.state.dest_topic_title = None;
+                                    self.state.auto_create_topic = true;
                                 } else if let Some((id, title)) = self.available_topics.get(i - 1) {
                                     self.state.dest_topic_id = Some(*id);
                                     self.state.dest_topic_title = Some(title.clone());
+                                    self.state.auto_create_topic = false;
                                 }
 
                                 let state_clone = self.state.clone();
@@ -586,17 +574,18 @@ impl App {
                         }
 
                         // Handle automatic topic creation
-                        if state_clone.dest_topic_id.is_none()
-                            && let Some(title_str) = state_clone.dest_topic_title.as_deref()
-                            && title_str.starts_with("[Auto-create topic: ")
-                            && title_str.ends_with(']')
+                        if state_clone.auto_create_topic
                             && let Some(group_id) = state_clone.dest_group_id
                         {
-                            let topic_title = &title_str[20..title_str.len() - 1];
+                            let topic_title = state_clone
+                                .source_channel_title
+                                .as_deref()
+                                .unwrap_or("Archive");
                             match tg_clone.create_topic(group_id, topic_title).await {
                                 Ok(new_topic_id) => {
                                     state_clone.dest_topic_id = Some(new_topic_id);
                                     state_clone.dest_topic_title = Some(topic_title.to_string());
+                                    state_clone.auto_create_topic = false;
                                     let s_clone = state_clone.clone();
                                     let _ = s_clone.save().await;
                                 }

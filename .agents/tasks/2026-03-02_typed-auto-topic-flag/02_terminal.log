@@ -1,0 +1,17 @@
+# Terminal Log - 2026-03-02 Typed Auto-Topic Flag
+
+- Initial search for magic string:
+```zsh
+rg "Auto-create topic" repo/src
+```
+Output:
+```
+repo/src/app/mod.rs
+185:                                    .map(|t| t.starts_with("[Auto-create topic:"))
+375:                                        Some(format!("[Auto-create topic: {}]", channel_title));
+591:                            && title_str.starts_with("[Auto-create topic: ")
+```
+
+- Modifying `repo/src/state/mod.rs` to add `auto_create_topic`.
+- Modifying `repo/src/app/mod.rs` to update logic.
+- Verifying with cargo commands.
