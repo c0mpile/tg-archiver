@@ -88,6 +88,7 @@ pub struct App {
     pub topic_list_state: ratatui::widgets::ListState,
     pub filter_config_state: FilterConfigState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
+    pub channel_loading: bool,
 }
 
 impl App {
@@ -109,6 +110,7 @@ impl App {
             topic_list_state: ratatui::widgets::ListState::default(),
             filter_config_state: FilterConfigState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            channel_loading: false,
         }
     }
 
@@ -231,9 +233,13 @@ impl App {
                             self.active_view = ActiveView::Home;
                         }
                         crossterm::event::KeyCode::Enter => {
+                            if self.channel_loading {
+                                return;
+                            }
                             if let Some(i) = self.channel_list_state.selected()
                                 && let Some((id, title)) = self.available_channels.get(i)
                             {
+                                self.channel_loading = true;
                                 let new_id = *id;
                                 let title_clone = title.clone();
                                 let current_state = self.state.clone();
@@ -509,6 +515,7 @@ impl App {
                 }
             },
             AppEvent::ChannelStateLoaded(new_state) => {
+                self.channel_loading = false;
                 self.state = new_state;
 
                 if let Some(channel_id) = self.state.source_channel_id {
@@ -666,6 +673,7 @@ impl App {
                 });
             }
             AppEvent::ArchiveError(err) => {
+                self.channel_loading = false;
                 self.home_error = Some(err);
                 self.active_view = ActiveView::Home;
                 let state_clone = self.state.clone();
