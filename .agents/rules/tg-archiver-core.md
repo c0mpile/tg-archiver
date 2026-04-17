@@ -6,16 +6,16 @@ trigger: always_on
 
 ## 1. Workspace Context
 
-> **TASK AUDIT TRAIL LOCATION — MANDATORY:** All task directories (`YYYY-MM-DD_task-slug/`) 
-> must be created at `~/dev/tg-archiver/.agents/tasks/`. This path is outside the git 
-> repository. Never create task artifacts under `~/dev/tg-archiver/repo/` or any subdirectory 
-> of it. The git repo root is `~/dev/tg-archiver/repo/` — `.agents/` is a sibling of `repo/`, 
+> **TASK AUDIT TRAIL LOCATION — MANDATORY:** All task directories (`YYYY-MM-DD_task-slug/`)
+> must be created at `~/dev/tg-archiver/.agents/tasks/`. This path is outside the git
+> repository. Never create task artifacts under `~/dev/tg-archiver/repo/` or any subdirectory
+> of it. The git repo root is `~/dev/tg-archiver/repo/` — `.agents/` is a sibling of `repo/`,
 > not a child of it.
 
-`tg-archiver` is a terminal application that mirrors media files (video, audio,
-image, archive) from a public Telegram source channel to a topic inside a
-private destination group, with parallel downloads, configurable filters, and
-full pause/resume support across sessions.
+`tg-archiver` is a Rust TUI application that mirrors Telegram channels to topics in a private
+group using Telegram's server-side forward-as-copy mechanism (`messages.ForwardMessages` with
+`drop_author: true`). No files are downloaded or uploaded — all content is copied server-side.
+
 ```
 ~/dev/tg-archiver/              ← project root (NOT inside the repo)
 ├── .agents/
@@ -36,12 +36,14 @@ full pause/resume support across sessions.
     ├── .env.example            # committed — shows required keys with empty values
     ├── .env                    # never committed — holds real credentials
     └── tests/                  # integration tests
-
 ```
 
 **Language:** Rust (stable channel, minimum version pinned in `Cargo.toml` via `rust-version`).
 **Build:** `cargo build --release` produces `target/release/tg-archiver`.
-**Tests:** `cargo test` (unit + integration); single test: `cargo test <test_name>`.
+**Tests:** `cargo test -- --test-threads=1` (unit + integration); single test: `cargo test <test_name>`.
+
+> **NOTE:** Tests must be run with `--test-threads=1` because state tests use
+> `unsafe { std::env::set_var }` which races under parallel test execution.
 
 ---
 
@@ -78,6 +80,12 @@ The grammers session file (`TG_SESSION_FILE`) lives outside the repo at the
 path set in `.env`. Suggested default: `~/.config/tg-archiver/tg-archiver.session`.
 **Never place or commit the session file inside `repo/`.**
 
+### Telegram auth sequencing
+
+Telegram authentication must complete **before** the TUI initialises. The auth
+flow (phone number prompt, code entry) runs in the terminal directly. Only after
+a valid session exists does the TUI take over the terminal.
+
 ---
 
 ## 3. Language & Toolchain Rules
@@ -105,8 +113,9 @@ to match on (e.g. `FloodWait`, `AuthRequired`, `SessionExpired`). Never use
 
 | Crate | Purpose |
 |---|---|
-| `grammers-client` | Telegram MTProto client |
+| `grammers-client` | Telegram MTProto client (v0.9.0) |
 | `grammers-session` | Session persistence backend for grammers |
+| `grammers-tl-types` | Raw TL type definitions — required for `ForwardMessages` and `CreateForumTopic` |
 | `tokio` | Async runtime (`features = ["full"]`) |
 | `ratatui` | TUI framework |
 | `crossterm` | Terminal backend for ratatui |
@@ -117,10 +126,16 @@ to match on (e.g. `FloodWait`, `AuthRequired`, `SessionExpired`). Never use
 
 **Do not add `tokio-compat`, `async-std`, or any second async runtime.**
 
+> **grammers 0.9.0 constraints:**
+> - `forwardMessages` with `drop_author` is **not** exposed natively — must use raw TL via `client.invoke(&req)`
+> - `create_topic` (CreateForumTopic) is **not** exposed natively — must use raw TL
+> - `Media::Video` does not exist — all video is `Media::Document` with `video/*` MIME type
+> - All raw TL invocations must be wrapped in the `retry_flood_wait!` macro
+
 ### Tests
 
 Unit tests live in `#[cfg(test)]` modules within each source file. Integration
-tests live in `repo/tests/`. Run all: `cargo test`. Run one:
+tests live in `repo/tests/`. Run all: `cargo test -- --test-threads=1`. Run one:
 `cargo test <test_name> -- --nocapture`. Tests requiring live Telegram
 credentials must be gated with `#[ignore]` and documented with
 `// requires: TG_API_ID, TG_API_HASH`.
@@ -136,15 +151,15 @@ Repository is **private**.
 | Scope | Covers |
 |---|---|
 | `tui` | ratatui widgets, layout, input |
-| `telegram` | grammers client wrappers, flood-wait handling |
-| `archive` | Download scheduler, worker pool, upload logic |
+| `telegram` | grammers client wrappers, flood-wait handling, raw TL calls |
+| `archive` | forward-as-copy worker, chunked message scanning, cursor management |
 | `state` | Persistent state serialisation/deserialisation |
 | `config` | Config struct, `.env` loading |
 | `app` | App struct, event loop, state machine |
 | `error` | Error types |
 
-Examples: `feat(archive): add semaphore-gated parallel download pool`,
-`fix(telegram): retry after FloodWait with 2s buffer`.
+Examples: `feat(archive): implement forward-as-copy worker with 100-message chunks`,
+`fix(telegram): use correct Update variant for CreateForumTopic response`.
 
 ### Never commit
 
