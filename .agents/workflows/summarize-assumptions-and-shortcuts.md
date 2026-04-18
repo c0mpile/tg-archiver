@@ -2,4 +2,4 @@
 description: Identify shortcuts taken and assumptions made by agent
 ---
 
-Summarize every decision you made that wasn't explicitly specified in the rules, and every place you made an assumption or took a shortcut.
+Summarize every decision you made that wasn't explicitly specified in the rules, and every place you made an assumption or took a shortcut. Output all of them to an appropriately organized assumptions file under the correct task slug.
