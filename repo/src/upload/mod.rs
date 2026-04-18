@@ -1,12 +1,15 @@
 use crate::app::{AppEvent, UploadEntry, UploadMode};
 use crate::telegram::TelegramClient;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use grammers_tl_types::enums::{InputMedia, InputReplyTo};
 use grammers_tl_types::functions::messages::SendMedia;
 use grammers_tl_types::types::{InputMediaUploadedDocument, InputReplyToMessage};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tokio::fs;
+use tokio::io::AsyncBufReadExt;
+use tokio::process::Command;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct UploadSyncState {
@@ -304,7 +307,67 @@ pub async fn run_upload_loop(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        if let Err(e) = upload_file(&client, &path, dest_group_id, dest_topic_id, &caption).await {
+        // Determine actual file to upload (may be transcoded MKV)
+        const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+        let is_oversized_mp4 = size_bytes > FOUR_GIB
+            && path.extension().map(|e| e.to_ascii_lowercase())
+                == Some(std::ffi::OsString::from("mp4"));
+
+        let upload_path = if is_oversized_mp4 {
+            let mkv_path = path.with_extension("mkv");
+            if mkv_path.exists() {
+                mkv_path
+            } else {
+                app_tx
+                    .send(AppEvent::TranscodeStarted {
+                        filename: rel_path.clone(),
+                        index: idx + 1,
+                        total,
+                    })
+                    .await?;
+
+                let duration = get_file_duration(&path).await.unwrap_or(0.0);
+
+                match transcode_to_h265(&path, &app_tx, &rel_path, idx + 1, total, duration).await {
+                    Ok(mkv_path) => {
+                        app_tx
+                            .send(AppEvent::TranscodeComplete {
+                                filename: rel_path.clone(),
+                                mkv_path: mkv_path.clone(),
+                            })
+                            .await?;
+                        mkv_path
+                    }
+                    Err(e) => {
+                        app_tx
+                            .send(AppEvent::TranscodeError {
+                                filename: rel_path.clone(),
+                                error: e.to_string(),
+                            })
+                            .await?;
+                        app_tx
+                            .send(AppEvent::UploadWarning(format!(
+                                "Transcode failed for '{}': {}",
+                                rel_path, e
+                            )))
+                            .await?;
+                        continue;
+                    }
+                }
+            }
+        } else {
+            path.clone()
+        };
+
+        if let Err(e) = upload_file(
+            &client,
+            &upload_path,
+            dest_group_id,
+            dest_topic_id,
+            &caption,
+        )
+        .await
+        {
             app_tx
                 .send(AppEvent::UploadWarning(format!(
                     "Failed to upload '{}': {}",
@@ -372,4 +435,146 @@ async fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result
         }
     }
     Ok(())
+}
+
+async fn get_file_duration(path: &Path) -> Result<f64> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .context("Failed to spawn ffprobe")?;
+
+    if !output.status.success() {
+        return Err(anyhow!("ffprobe exited with status {}", output.status));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    trimmed
+        .parse::<f64>()
+        .map_err(|e| anyhow!("Failed to parse ffprobe duration '{}': {}", trimmed, e))
+}
+
+pub async fn transcode_to_h265(
+    input_path: &Path,
+    app_tx: &tokio::sync::mpsc::Sender<AppEvent>,
+    filename: &str,
+    _index: usize,
+    _total: usize,
+    total_duration_secs: f64,
+) -> Result<PathBuf> {
+    let mkv_path = input_path.with_extension("mkv");
+
+    if mkv_path.exists() {
+        return Ok(mkv_path);
+    }
+
+    let mut child = Command::new("ffmpeg")
+        .args(["-nostdin", "-vaapi_device", "/dev/dri/renderD128", "-i"])
+        .arg(input_path)
+        .args([
+            "-vf",
+            "format=nv12,hwupload",
+            "-vcodec",
+            "hevc_vaapi",
+            "-rc_mode",
+            "QVBR",
+            "-global_quality",
+            "22",
+            "-b:v",
+            "3000k",
+            "-maxrate",
+            "6000k",
+            "-refs",
+            "4",
+            "-g",
+            "120",
+            "-bf",
+            "3",
+            "-acodec",
+            "copy",
+            "-y",
+        ])
+        .arg(&mkv_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to spawn ffmpeg")?;
+
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let reader = tokio::io::BufReader::new(stderr);
+    let mut lines = reader.lines();
+
+    let tx = app_tx.clone();
+    let filename_owned = filename.to_string();
+    let progress_task = tokio::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            // Parse ffmpeg progress lines of the form:
+            // frame=  123 fps= 45 q=28.0 size=   12345kB time=00:00:10.50 ... speed=2.5x
+            let mut fps: f32 = 0.0;
+            let mut time_str = String::new();
+            let mut time_secs: f64 = 0.0;
+            let mut speed: f32 = 0.0;
+            let mut found_time = false;
+
+            for token in line.split_whitespace() {
+                if let Some(val) = token.strip_prefix("fps=") {
+                    fps = val.parse().unwrap_or(0.0);
+                } else if let Some(val) = token.strip_prefix("time=") {
+                    // HH:MM:SS.ss
+                    time_str = val.to_string();
+                    let parts: Vec<&str> = val.splitn(3, ':').collect();
+                    if parts.len() == 3 {
+                        let h: f64 = parts[0].parse().unwrap_or(0.0);
+                        let m: f64 = parts[1].parse().unwrap_or(0.0);
+                        let s: f64 = parts[2].parse().unwrap_or(0.0);
+                        time_secs = h * 3600.0 + m * 60.0 + s;
+                        found_time = true;
+                    }
+                } else if let Some(val) = token.strip_prefix("speed=") {
+                    speed = val.trim_end_matches('x').parse().unwrap_or(0.0);
+                }
+            }
+
+            if !found_time {
+                continue;
+            }
+
+            let percent = if total_duration_secs > 0.0 {
+                (time_secs / total_duration_secs * 100.0).clamp(0.0, 100.0) as f32
+            } else {
+                0.0
+            };
+
+            let _ = tx
+                .send(AppEvent::TranscodeProgress {
+                    filename: filename_owned.clone(),
+                    fps,
+                    speed,
+                    time_encoded: time_str,
+                    percent,
+                })
+                .await;
+        }
+    });
+
+    let status = child.wait().await.context("ffmpeg process error")?;
+    let _ = progress_task.await;
+
+    if !status.success() {
+        return Err(anyhow!("ffmpeg exited with status {}", status));
+    }
+
+    Ok(mkv_path)
 }

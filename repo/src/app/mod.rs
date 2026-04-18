@@ -55,6 +55,26 @@ pub enum AppEvent {
     UploadError(String),
     UploadWarning(String),
     UploadTopicCreated(i32, String),
+    TranscodeStarted {
+        filename: String,
+        index: usize,
+        total: usize,
+    },
+    TranscodeProgress {
+        filename: String,
+        fps: f32,
+        speed: f32,
+        time_encoded: String,
+        percent: f32,
+    },
+    TranscodeComplete {
+        filename: String,
+        mkv_path: std::path::PathBuf,
+    },
+    TranscodeError {
+        filename: String,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +213,12 @@ pub struct App {
     pub upload_warnings: Vec<String>,
     pub upload_pause_tx: Option<tokio::sync::watch::Sender<bool>>,
     pub upload_cancel_tx: Option<tokio::sync::watch::Sender<()>>,
+    pub upload_is_transcoding: bool,
+    pub upload_transcode_filename: String,
+    pub upload_transcode_fps: f32,
+    pub upload_transcode_speed: f32,
+    pub upload_transcode_time_encoded: String,
+    pub upload_transcode_percent: f32,
 }
 
 impl App {
@@ -249,6 +275,12 @@ impl App {
             upload_warnings: Vec::new(),
             upload_pause_tx: None,
             upload_cancel_tx: None,
+            upload_is_transcoding: false,
+            upload_transcode_filename: String::new(),
+            upload_transcode_fps: 0.0,
+            upload_transcode_speed: 0.0,
+            upload_transcode_time_encoded: String::new(),
+            upload_transcode_percent: 0.0,
         }
     }
 
@@ -1561,6 +1593,43 @@ impl App {
                 self.upload_dest_topic_title = Some(title);
                 self.active_view = ActiveView::UploadProgress;
                 let _ = tx.try_send(AppEvent::StartUploadRun);
+            }
+            AppEvent::TranscodeStarted { filename, .. } => {
+                self.upload_is_transcoding = true;
+                self.upload_transcode_filename = filename;
+                self.upload_transcode_fps = 0.0;
+                self.upload_transcode_speed = 0.0;
+                self.upload_transcode_time_encoded = String::new();
+                self.upload_transcode_percent = 0.0;
+            }
+            AppEvent::TranscodeProgress {
+                filename,
+                fps,
+                speed,
+                time_encoded,
+                percent,
+            } => {
+                self.upload_transcode_filename = filename;
+                self.upload_transcode_fps = fps;
+                self.upload_transcode_speed = speed;
+                self.upload_transcode_time_encoded = time_encoded;
+                self.upload_transcode_percent = percent;
+            }
+            AppEvent::TranscodeComplete { .. } => {
+                self.upload_is_transcoding = false;
+                self.upload_transcode_filename = String::new();
+                self.upload_transcode_fps = 0.0;
+                self.upload_transcode_speed = 0.0;
+                self.upload_transcode_time_encoded = String::new();
+                self.upload_transcode_percent = 0.0;
+            }
+            AppEvent::TranscodeError { .. } => {
+                self.upload_is_transcoding = false;
+                self.upload_transcode_filename = String::new();
+                self.upload_transcode_fps = 0.0;
+                self.upload_transcode_speed = 0.0;
+                self.upload_transcode_time_encoded = String::new();
+                self.upload_transcode_percent = 0.0;
             }
         }
     }

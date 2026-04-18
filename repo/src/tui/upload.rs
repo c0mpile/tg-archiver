@@ -183,19 +183,57 @@ pub fn render_upload_topic_name_entry(f: &mut Frame, app: &mut App) {
 
 pub fn render_upload_progress(f: &mut Frame, app: &mut App) {
     let size = f.area();
+
+    // Build constraint list dynamically: transcode panel only when active
+    let mut constraints: Vec<Constraint> = Vec::new();
+    if app.upload_is_transcoding {
+        constraints.push(Constraint::Length(6));
+    }
+    constraints.push(Constraint::Length(3)); // file info
+    constraints.push(Constraint::Length(3)); // upload gauge
+    constraints.push(Constraint::Min(1)); // warnings / help
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
-        .constraints(
-            [
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Min(1),
-            ]
-            .as_ref(),
-        )
+        .constraints(constraints)
         .split(size);
 
+    // Chunk index offset: transcode panel occupies chunk[0] when present
+    let offset = usize::from(app.upload_is_transcoding);
+
+    // ── Transcode panel ───────────────────────────────────────────────────
+    if app.upload_is_transcoding {
+        let tc_block = Block::default()
+            .title("Transcoding")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+
+        let stats_line = format!(
+            "File: {}  |  FPS: {:.1}  Speed: {:.1}x  Encoded: {}",
+            app.upload_transcode_filename,
+            app.upload_transcode_fps,
+            app.upload_transcode_speed,
+            app.upload_transcode_time_encoded,
+        );
+
+        // Split inner area of the transcode block: stats row + gauge row
+        let tc_inner = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)].as_ref())
+            .split(tc_block.inner(chunks[0]));
+
+        f.render_widget(tc_block, chunks[0]);
+        f.render_widget(Paragraph::new(stats_line), tc_inner[0]);
+
+        let tc_gauge = Gauge::default()
+            .gauge_style(Style::default().fg(Color::Yellow).bg(Color::Black))
+            .percent((app.upload_transcode_percent as u16).min(100))
+            .label(format!("{:.1}%", app.upload_transcode_percent));
+        f.render_widget(tc_gauge, tc_inner[1]);
+    }
+
+    // ── File info ─────────────────────────────────────────────────────────
     let block = Block::default()
         .title("Uploading Files")
         .borders(Borders::ALL)
@@ -206,8 +244,9 @@ pub fn render_upload_progress(f: &mut Frame, app: &mut App) {
         app.upload_progress_current_file
     ))
     .block(block);
-    f.render_widget(file_info, chunks[0]);
+    f.render_widget(file_info, chunks[offset]);
 
+    // ── Upload progress gauge ─────────────────────────────────────────────
     let percent = if app.upload_progress_total > 0 {
         ((app.upload_progress_current as f64 / app.upload_progress_total as f64) * 100.0) as u16
     } else {
@@ -223,8 +262,9 @@ pub fn render_upload_progress(f: &mut Frame, app: &mut App) {
             app.upload_progress_current, app.upload_progress_total
         ));
 
-    f.render_widget(gauge, chunks[1]);
+    f.render_widget(gauge, chunks[offset + 1]);
 
+    // ── Help / warnings ───────────────────────────────────────────────────
     let mut lines = vec![Line::from(
         "Press 'p' to pause/resume, 'q' or Esc to cancel.",
     )];
@@ -257,5 +297,5 @@ pub fn render_upload_progress(f: &mut Frame, app: &mut App) {
     }
 
     let p = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
-    f.render_widget(p, chunks[2]);
+    f.render_widget(p, chunks[offset + 2]);
 }
