@@ -28,6 +28,9 @@ pub enum AppEvent {
     TopicCreated(i32, String),
     ArchiveTotalCount(i32),
     MonitoringTick,
+    PairSyncStarted {
+        pair_index: usize,
+    },
     PairSynced {
         pair_index: usize,
         last_forwarded_message_id: i32,
@@ -36,6 +39,14 @@ pub enum AppEvent {
         pair_index: usize,
         error: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PairStatus {
+    #[default]
+    Idle,
+    Syncing,
+    Error(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -109,6 +120,7 @@ pub struct App {
     pub interval_config_state: IntervalConfigState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
     pub active_pair_index: usize,
+    pub pair_statuses: Vec<PairStatus>,
     pub source_message_count: Option<i32>,
     pub monitoring_cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
     pub next_tick_at: Option<std::time::Instant>,
@@ -121,6 +133,7 @@ impl App {
                 .channel_pairs
                 .push(crate::state::ChannelPair::default());
         }
+        let pair_statuses = vec![PairStatus::default(); state.channel_pairs.len()];
         let has_partial_state = state.channel_pairs[0].last_forwarded_message_id.is_some();
         Self {
             config,
@@ -145,6 +158,7 @@ impl App {
             interval_config_state: IntervalConfigState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             active_pair_index: 0,
+            pair_statuses,
             source_message_count: None,
             monitoring_cancel_tx: None,
             next_tick_at: None,
@@ -535,6 +549,7 @@ impl App {
                             }
                             let new_pair = crate::state::ChannelPair::default();
                             self.state.channel_pairs.push(new_pair);
+                            self.pair_statuses.push(PairStatus::default());
                             self.active_pair_index = self.state.channel_pairs.len() - 1;
 
                             self.active_view = ActiveView::ChannelSelect;
@@ -591,6 +606,7 @@ impl App {
                         | crossterm::event::KeyCode::Enter => {
                             if self.state.channel_pairs.len() > 1 {
                                 self.state.channel_pairs.remove(self.active_pair_index);
+                                self.pair_statuses.remove(self.active_pair_index);
                                 if self.active_pair_index >= self.state.channel_pairs.len() {
                                     self.active_pair_index = self.state.channel_pairs.len() - 1;
                                 }
@@ -936,6 +952,11 @@ impl App {
                         + std::time::Duration::from_secs(self.state.poll_interval_secs.max(60)),
                 );
             }
+            AppEvent::PairSyncStarted { pair_index } => {
+                if pair_index < self.pair_statuses.len() {
+                    self.pair_statuses[pair_index] = PairStatus::Syncing;
+                }
+            }
             AppEvent::PairSynced {
                 pair_index,
                 last_forwarded_message_id,
@@ -943,17 +964,17 @@ impl App {
                 if pair_index < self.state.channel_pairs.len() {
                     self.state.channel_pairs[pair_index].last_forwarded_message_id =
                         Some(last_forwarded_message_id);
+                    self.pair_statuses[pair_index] = PairStatus::Idle;
                     let state_clone = self.state.clone();
                     tokio::spawn(async move {
                         let _ = state_clone.save().await;
                     });
                 }
             }
-            AppEvent::PairError {
-                pair_index: _,
-                error: _,
-            } => {
-                // Could log or show error in UI later
+            AppEvent::PairError { pair_index, error } => {
+                if pair_index < self.pair_statuses.len() {
+                    self.pair_statuses[pair_index] = PairStatus::Error(error);
+                }
             }
         }
     }

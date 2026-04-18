@@ -22,13 +22,15 @@ pub fn start_monitoring_loop(
             tokio::select! {
                 _ = interval.tick() => {
                     let _ = tx.send(AppEvent::MonitoringTick).await;
-                    
+
                     // Iterate sequentially
                     for i in 0..state.channel_pairs.len() {
                         // Check for cancellation before processing each pair
                         if *cancel_rx.borrow() {
                             return;
                         }
+
+                        let _ = tx.send(AppEvent::PairSyncStarted { pair_index: i }).await;
 
                         // Background runs suppress SaveCursor and ArchiveTotalCount etc.
                         match run_archive_loop(

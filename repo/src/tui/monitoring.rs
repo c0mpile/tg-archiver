@@ -16,6 +16,7 @@ pub fn render_monitoring(f: &mut Frame, app: &mut App) {
             [
                 Constraint::Length(3), // Header/Countdown
                 Constraint::Min(5),    // Table
+                Constraint::Length(1), // Footer (Error)
                 Constraint::Length(2), // Help
             ]
             .as_ref(),
@@ -44,7 +45,7 @@ pub fn render_monitoring(f: &mut Frame, app: &mut App) {
     f.render_widget(header, chunks[0]);
 
     // Table
-    let header_cells = ["Source", "Destination", "Last ID"]
+    let header_cells = ["Source", "Destination", "Last ID", "Status"]
         .iter()
         .map(|h| ratatui::widgets::Cell::from(*h).style(Style::default().fg(Color::Cyan)));
     let header_row = Row::new(header_cells)
@@ -70,6 +71,14 @@ pub fn render_monitoring(f: &mut Frame, app: &mut App) {
             .map(|id| id.to_string())
             .unwrap_or_else(|| "0".to_string());
 
+        let status = &app.pair_statuses[i];
+        let (status_text, status_color) = match status {
+            crate::app::PairStatus::Idle => ("Idle", Color::DarkGray),
+            crate::app::PairStatus::Syncing => ("Syncing...", Color::Yellow),
+            crate::app::PairStatus::Error(_) => ("Error", Color::Red),
+        };
+        let status_span = Span::styled(status_text, Style::default().fg(status_color));
+
         let style = if i == app.active_pair_index {
             Style::default()
                 .bg(Color::Blue)
@@ -79,15 +88,22 @@ pub fn render_monitoring(f: &mut Frame, app: &mut App) {
             Style::default().fg(Color::White)
         };
 
-        Row::new(vec![source, dest, last_id]).style(style)
+        Row::new(vec![
+            ratatui::widgets::Cell::from(source),
+            ratatui::widgets::Cell::from(dest),
+            ratatui::widgets::Cell::from(last_id),
+            ratatui::widgets::Cell::from(status_span),
+        ])
+        .style(style)
     });
 
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(40),
-            Constraint::Percentage(40),
-            Constraint::Percentage(20),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+            Constraint::Percentage(15),
+            Constraint::Percentage(25),
         ],
     )
     .header(header_row)
@@ -99,10 +115,17 @@ pub fn render_monitoring(f: &mut Frame, app: &mut App) {
 
     f.render_widget(table, chunks[1]);
 
+    // Error Footer
+    if let Some(crate::app::PairStatus::Error(msg)) = app.pair_statuses.get(app.active_pair_index) {
+        let error_text =
+            Paragraph::new(format!("Error: {}", msg)).style(Style::default().fg(Color::Red));
+        f.render_widget(error_text, chunks[2]);
+    }
+
     // Help
     let help_text = Paragraph::new("Up/Down: Select Pair | a: Add | d: Delete | s: Force Sync | i: Set Interval | q: Exit Monitoring")
         .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(help_text, chunks[2]);
+    f.render_widget(help_text, chunks[3]);
 }
 
 pub fn render_delete_prompt(f: &mut Frame, _app: &mut App) {
