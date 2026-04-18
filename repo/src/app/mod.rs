@@ -179,12 +179,16 @@ impl App {
                         }
                         crossterm::event::KeyCode::Char('s') => {
                             let mut missing = Vec::new();
-                            if self.state.channel_pairs[self.active_pair_index].source_channel_id
-                                == 0
+                            if self.state.channel_pairs[self.active_pair_index]
+                                .source_channel_id
+                                .is_none()
                             {
                                 missing.push("Source Channel");
                             }
-                            if self.state.channel_pairs[self.active_pair_index].dest_group_id == 0 {
+                            if self.state.channel_pairs[self.active_pair_index]
+                                .dest_group_id
+                                .is_none()
+                            {
                                 missing.push("Destination Group");
                             }
                             if self.state.channel_pairs[self.active_pair_index]
@@ -254,7 +258,7 @@ impl App {
                                 && let Some((id, title)) = self.available_channels.get(i)
                             {
                                 self.state.channel_pairs[self.active_pair_index]
-                                    .source_channel_id = *id;
+                                    .source_channel_id = Some(*id);
                                 self.state.channel_pairs[self.active_pair_index]
                                     .source_channel_title = title.clone();
                                 let state_clone = self.state.clone();
@@ -316,7 +320,7 @@ impl App {
                                 && let Some((id, title)) = self.available_groups.get(i)
                             {
                                 self.state.channel_pairs[self.active_pair_index].dest_group_id =
-                                    *id;
+                                    Some(*id);
                                 self.state.channel_pairs[self.active_pair_index].dest_group_title =
                                     title.clone();
                                 let state_clone = self.state.clone();
@@ -582,11 +586,15 @@ impl App {
                 let paused_clone = Arc::clone(&self.is_paused);
                 let active_idx = self.active_pair_index;
 
-                if self.state.channel_pairs[self.active_pair_index].source_channel_id != 0 {
-                    let source_id =
-                        self.state.channel_pairs[self.active_pair_index].source_channel_id;
-                    let dest_id = self.state.channel_pairs[self.active_pair_index].dest_group_id;
-                    let dest_id_opt = if dest_id == 0 { None } else { Some(dest_id) };
+                if self.state.channel_pairs[self.active_pair_index]
+                    .source_channel_id
+                    .is_some()
+                {
+                    let source_id = self.state.channel_pairs[self.active_pair_index]
+                        .source_channel_id
+                        .unwrap();
+                    let dest_id_opt =
+                        self.state.channel_pairs[self.active_pair_index].dest_group_id;
                     tokio::spawn(async move {
                         let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
                         let dest_missing = match dest_id_opt {
@@ -601,9 +609,12 @@ impl App {
 
                         // Handle automatic topic creation
                         if state_clone.auto_create_topic
-                            && state_clone.channel_pairs[active_idx].dest_group_id != 0
+                            && state_clone.channel_pairs[active_idx]
+                                .dest_group_id
+                                .is_some()
                         {
-                            let group_id = state_clone.channel_pairs[active_idx].dest_group_id;
+                            let group_id =
+                                state_clone.channel_pairs[active_idx].dest_group_id.unwrap();
                             let topic_title = state_clone.channel_pairs[active_idx]
                                 .source_channel_title
                                 .clone();
@@ -685,12 +696,15 @@ impl App {
                     let paused_clone = Arc::clone(&self.is_paused);
                     let active_idx = self.active_pair_index;
 
-                    if self.state.channel_pairs[self.active_pair_index].source_channel_id != 0 {
-                        let source_id =
-                            self.state.channel_pairs[self.active_pair_index].source_channel_id;
-                        let dest_id =
+                    if self.state.channel_pairs[self.active_pair_index]
+                        .source_channel_id
+                        .is_some()
+                    {
+                        let source_id = self.state.channel_pairs[self.active_pair_index]
+                            .source_channel_id
+                            .unwrap();
+                        let dest_id_opt =
                             self.state.channel_pairs[self.active_pair_index].dest_group_id;
-                        let dest_id_opt = if dest_id == 0 { None } else { Some(dest_id) };
                         tokio::spawn(async move {
                             let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
                             let dest_missing = match dest_id_opt {

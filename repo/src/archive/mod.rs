@@ -35,17 +35,18 @@ async fn run_archive_loop(
     tx: mpsc::Sender<AppEvent>,
     pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
-    if state.channel_pairs.is_empty()
-        || state.channel_pairs[active_pair_index].source_channel_id == 0
-    {
-        anyhow::bail!("Source channel not set");
-    }
-    let source_channel_id = state.channel_pairs[active_pair_index].source_channel_id;
+    let pair = state
+        .channel_pairs
+        .get(active_pair_index)
+        .ok_or_else(|| anyhow::anyhow!("Pair index out of bounds"))?;
 
-    if state.channel_pairs[active_pair_index].dest_group_id == 0 {
-        anyhow::bail!("Destination group not set");
-    }
-    let dest_group_id = state.channel_pairs[active_pair_index].dest_group_id;
+    let source_channel_id = pair
+        .source_channel_id
+        .ok_or_else(|| anyhow::anyhow!("Source channel not set"))?;
+
+    let dest_group_id = pair
+        .dest_group_id
+        .ok_or_else(|| anyhow::anyhow!("Destination group not set"))?;
 
     let input_peer_source = match telegram_client.get_input_peer(source_channel_id).await {
         Some(peer) => peer,
