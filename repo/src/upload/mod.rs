@@ -100,7 +100,7 @@ pub async fn upload_file(
         .client
         .upload_file(local_path)
         .await
-        .context("Failed to upload file to Telegram server")?;
+        .map_err(|e| anyhow::anyhow!("Failed to upload file to Telegram server: {:#}", e))?;
 
     let ext = local_path
         .extension()
