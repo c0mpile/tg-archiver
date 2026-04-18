@@ -1,9 +1,12 @@
 use crate::app::{AppEvent, UploadEntry, UploadMode};
 use crate::telegram::TelegramClient;
 use anyhow::{Context, Result, anyhow};
-use grammers_tl_types::enums::{InputMedia, InputReplyTo};
+use grammers_tl_types::enums::{DocumentAttribute, InputMedia, InputReplyTo};
 use grammers_tl_types::functions::messages::SendMedia;
-use grammers_tl_types::types::{InputMediaUploadedDocument, InputReplyToMessage};
+use grammers_tl_types::types::{
+    DocumentAttributeFilename, DocumentAttributeVideo, InputMediaUploadedDocument,
+    InputReplyToMessage,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -131,6 +134,39 @@ pub async fn upload_file(
     }
     .to_string();
 
+    let is_mp4 = ext.to_lowercase() == "mp4";
+    let video_meta = if is_mp4 {
+        get_video_metadata(local_path).await
+    } else {
+        None
+    };
+
+    let filename_attr = DocumentAttribute::Filename(DocumentAttributeFilename {
+        file_name: local_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    });
+
+    let attributes = if let Some((w, h, dur)) = video_meta {
+        vec![
+            filename_attr,
+            DocumentAttribute::Video(DocumentAttributeVideo {
+                round_message: false,
+                supports_streaming: true,
+                nosound: false,
+                duration: dur,
+                w,
+                h,
+                preload_prefix_size: None,
+                video_start_ts: None,
+                video_codec: None,
+            }),
+        ]
+    } else {
+        vec![filename_attr]
+    };
+
     let input_peer = client
         .get_input_peer(dest_group_id)
         .await
@@ -140,7 +176,7 @@ pub async fn upload_file(
         file: uploaded.raw,
         thumb: None,
         mime_type,
-        attributes: vec![],
+        attributes,
         stickers: None,
         ttl_seconds: None,
         nosound_video: false,
@@ -314,9 +350,14 @@ pub async fn run_upload_loop(
                 == Some(std::ffi::OsString::from("mp4"));
 
         let upload_path = if is_oversized_mp4 {
-            let mkv_path = path.with_extension("mkv");
-            if mkv_path.exists() {
-                mkv_path
+            let stem = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let h265_path = path.with_file_name(format!("{}.h265.mp4", stem));
+            if h265_path.exists() {
+                h265_path
             } else {
                 app_tx
                     .send(AppEvent::TranscodeStarted {
@@ -329,14 +370,14 @@ pub async fn run_upload_loop(
                 let duration = get_file_duration(&path).await.unwrap_or(0.0);
 
                 match transcode_to_h265(&path, &app_tx, &rel_path, idx + 1, total, duration).await {
-                    Ok(mkv_path) => {
+                    Ok(h265_path) => {
                         app_tx
                             .send(AppEvent::TranscodeComplete {
                                 filename: rel_path.clone(),
-                                mkv_path: mkv_path.clone(),
+                                mkv_path: h265_path.clone(),
                             })
                             .await?;
-                        mkv_path
+                        h265_path
                     }
                     Err(e) => {
                         app_tx
@@ -465,6 +506,48 @@ async fn get_file_duration(path: &Path) -> Result<f64> {
         .map_err(|e| anyhow!("Failed to parse ffprobe duration '{}': {}", trimmed, e))
 }
 
+async fn get_video_metadata(path: &Path) -> Option<(i32, i32, f64)> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=0",
+        ])
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut width: Option<i32> = None;
+    let mut height: Option<i32> = None;
+    let mut duration: Option<f64> = None;
+
+    for line in stdout.lines() {
+        if let Some((key, val)) = line.split_once('=') {
+            match key.trim() {
+                "width" => width = val.trim().parse().ok(),
+                "height" => height = val.trim().parse().ok(),
+                "duration" => duration = val.trim().parse().ok(),
+                _ => {}
+            }
+        }
+    }
+
+    Some((width?, height?, duration?))
+}
+
 pub async fn transcode_to_h265(
     input_path: &Path,
     app_tx: &tokio::sync::mpsc::Sender<AppEvent>,
@@ -473,10 +556,15 @@ pub async fn transcode_to_h265(
     _total: usize,
     total_duration_secs: f64,
 ) -> Result<PathBuf> {
-    let mkv_path = input_path.with_extension("mkv");
+    let stem = input_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let h265_path = input_path.with_file_name(format!("{}.h265.mp4", stem));
 
-    if mkv_path.exists() {
-        return Ok(mkv_path);
+    if h265_path.exists() {
+        return Ok(h265_path);
     }
 
     let mut child = Command::new("ffmpeg")
@@ -505,7 +593,7 @@ pub async fn transcode_to_h265(
             "copy",
             "-y",
         ])
-        .arg(&mkv_path)
+        .arg(&h265_path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -576,5 +664,5 @@ pub async fn transcode_to_h265(
         return Err(anyhow!("ffmpeg exited with status {}", status));
     }
 
-    Ok(mkv_path)
+    Ok(h265_path)
 }

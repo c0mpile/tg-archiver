@@ -1,30 +1,57 @@
-# H.265 VAAPI Transcode — Summary
+# Summary — 2026-04-18_h265-transcode
+
+**Status:** Complete ✓  
+**File changed:** `src/upload/mod.rs` (only)
+
+---
 
 ## What was done
 
-Added automatic H.265 VAAPI transcoding for oversized MP4 uploads. Three files modified, no files created or deleted.
+### Output format change: MKV → H265.MP4
 
-### `src/upload/mod.rs`
+`transcode_to_h265` now writes to `<stem>.h265.mp4` instead of `<stem>.mkv`.
+The `.h265` stem suffix avoids collision with the source `<stem>.mp4`.
+No ffmpeg arguments changed — H.265/HEVC in an MP4 container is valid.
 
-- **`get_file_duration`** (private): runs `ffprobe` via `tokio::process::Command` to retrieve video duration in seconds; caller uses `.unwrap_or(0.0)` for graceful degradation.
-- **`transcode_to_h265`** (pub): spawns `ffmpeg` with the VAAPI H.265 command; short-circuits if the `.mkv` already exists; streams stderr line-by-line, parsing `fps=`, `time=`, `speed=` tokens to emit `AppEvent::TranscodeProgress`; sends `TranscodeComplete` on success, returns `Err` on non-zero exit.
-- **`run_upload_loop`**: before `upload_file`, checks `size_bytes > 4 GiB && ext == "mp4"`. If true: checks for existing `.mkv` (skips transcode if present), otherwise sends `TranscodeStarted`, probes duration, calls `transcode_to_h265`. On `Err`: sends `TranscodeError` (to clear App UI state) then `UploadWarning` (consistent with all other warning paths) and `continue`s. `upload_path` is the `.mkv`; `rel_path_for_state` is always the original `.mp4` relative path for correct sync tracking.
+Three sites updated in `transcode_to_h265`:
+1. Path derivation (early-return existence check)
+2. ffmpeg `-y <output>` argument
+3. Return value
 
-### `src/app/mod.rs`
+One site updated in `run_upload_loop`:
+- Short-circuit "already transcoded" gate checks for `.h265.mp4` instead of `.mkv`
 
-- Four new `AppEvent` variants: `TranscodeStarted`, `TranscodeProgress`, `TranscodeComplete`, `TranscodeError`.
-- Six new `App` fields: `upload_is_transcoding`, `upload_transcode_filename`, `upload_transcode_fps`, `upload_transcode_speed`, `upload_transcode_time_encoded`, `upload_transcode_percent`. Initialised to defaults in `App::new`.
-- Four new match arms in `handle_event`. `TranscodeError` only resets UI state; the worker sends `UploadWarning` directly (no re-dispatch indirection).
+### Inline video attributes
 
-### `src/tui/upload.rs`
+`upload_file` now injects proper Telegram video metadata for MP4 files so
+the file is embedded as inline video rather than a generic document attachment.
 
-`render_upload_progress` builds its constraint vector dynamically. When `upload_is_transcoding` is true, a `Constraint::Length(6)` block is prepended and offset indexing (`offset = usize::from(app.upload_is_transcoding)`) keeps all subsequent chunk references correct. The transcode panel shows a yellow-bordered block with filename/FPS/speed/time stats and a `Color::Yellow` Gauge.
+**New helper `get_video_metadata(path) -> Option<(i32, i32, f64)>`:**
+- Runs `ffprobe` to extract `width`, `height`, `duration` from the first video stream
+- Returns `None` on any failure; `upload_file` degrades gracefully (uploads as document)
+- No new crate dependencies
+
+**`upload_file` changes:**
+- Calls `get_video_metadata` for any `.mp4` file (case-insensitive)
+- Builds `attributes` vec:
+  - `DocumentAttributeFilename` always present (both branches)
+  - `DocumentAttributeVideo { supports_streaming: true, duration: f64, w: i32, h: i32, video_codec: None }` added when metadata is available
+- Replaces previous `attributes: vec![]`
+
+### Type verification
+
+`DocumentAttributeVideo` in grammers-tl-types 0.9.0 (verified from build output):
+- `duration: f64` — parsed and used directly, no cast
+- `w: i32`, `h: i32` — not `u32`
+- `video_codec: Option<String>` — extra field not in TL schema docs; set to `None`
+
+---
 
 ## Verification
 
-```
-cargo fmt -- --check    ✓
-cargo clippy -- -D warnings   ✓
-cargo build --release   ✓  (5.84s)
-cargo test -- --test-threads=1  ✓  (2 passed, 1 ignored)
-```
+| Check | Result |
+|---|---|
+| `cargo fmt -- --check` | ✓ exit 0 |
+| `cargo clippy -- -D warnings` | ✓ exit 0 |
+| `cargo build --release` | ✓ exit 0 (5.11s) |
+| `cargo test -- --test-threads=1` | ✓ 2 passed, 1 ignored |

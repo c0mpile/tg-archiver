@@ -1,0 +1,73 @@
+# Terminal Log — 2026-04-18_h265-transcode
+
+## Step 1: Check grammers-tl-types version
+
+```
+$ grep -A2 'grammers-tl-types' /home/kevin/dev/tg-archiver/repo/Cargo.lock | head -20
+name = "grammers-tl-types"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+```
+
+## Step 2: Locate DocumentAttributeVideo struct in build output
+
+```
+$ find /home/kevin/dev/tg-archiver/repo/target -name 'generated_types.rs'
+/home/kevin/dev/tg-archiver/repo/target/debug/build/grammers-tl-types-09f2483fb741d69a/out/generated_types.rs
+/home/kevin/dev/tg-archiver/repo/target/debug/build/grammers-tl-types-aa27a47ccb63ff46/out/generated_types.rs
+/home/kevin/dev/tg-archiver/repo/target/debug/build/grammers-tl-types-f640614f5ab22d41/out/generated_types.rs
+
+$ grep -A 15 'pub struct DocumentAttributeVideo' \
+    .../grammers-tl-types-09f2483fb741d69a/out/generated_types.rs
+pub struct DocumentAttributeVideo {
+    pub round_message: bool,
+    pub supports_streaming: bool,
+    pub nosound: bool,
+    pub duration: f64,
+    pub w: i32,
+    pub h: i32,
+    pub preload_prefix_size: Option<i32>,
+    pub video_start_ts: Option<f64>,
+    pub video_codec: Option<String>,
+}
+```
+
+**Finding:** `duration: f64`, `w: i32`, `h: i32`, extra `video_codec` field.
+Plan updated to use `(i32, i32, f64)` return type, no rounding.
+
+## Step 3: Apply changes to src/upload/mod.rs
+
+Changes applied via multi_replace_file_content (single atomic edit):
+- Imports: added DocumentAttribute, DocumentAttributeFilename, DocumentAttributeVideo
+- upload_file: injected get_video_metadata call and attributes vec
+- run_upload_loop: updated short-circuit gate from .mkv to .h265.mp4
+- get_video_metadata: new helper returning Option<(i32, i32, f64)>
+- transcode_to_h265: output path changed to <stem>.h265.mp4 (3 sites)
+
+## Step 4: Verification pipeline
+
+```
+$ cargo fmt -- --check
+(exit 0 — no output)
+
+$ cargo clippy -- -D warnings
+    Checking tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
+(exit 0)
+
+$ cargo build --release
+   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+    Finished `release` profile [optimized] target(s) in 5.11s
+(exit 0)
+
+$ cargo test -- --test-threads=1
+running 3 tests
+test state::tests::test_migration_compatibility ... ok
+test state::tests::test_round_trip ... ok
+test telegram::tests::test_init_telegram_client ... ignored
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+(exit 0)
+```
+
+All four checks: **PASS**
