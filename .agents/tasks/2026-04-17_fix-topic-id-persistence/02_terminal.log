@@ -1,0 +1,9 @@
+# Terminal Log Summary — Topic ID Persistence Bug Fix
+
+- `ls -F`: Check directory structure.
+- `grep "active_pair_index =" src/app/mod.rs`: Search for state index usage.
+- `cargo test state::tests::test_missing_topic_id -- --nocapture`: Reproduction/verification of serde behavior.
+- `cargo fmt -- --check`: Verify formatting.
+- `cargo clippy -- -D warnings`: Verify linting.
+- `cargo build --release`: Verify production build.
+- `cargo test -- --test-threads=1`: Run full test suite.

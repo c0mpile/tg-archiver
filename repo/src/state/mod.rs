@@ -8,8 +8,11 @@ pub struct ChannelPair {
     #[serde(default)]
     pub dest_group_id: Option<i64>,
     pub dest_group_title: String,
+    #[serde(default)]
     pub dest_topic_id: Option<i32>,
+    #[serde(default)]
     pub dest_topic_title: Option<String>,
+    #[serde(default)]
     pub last_forwarded_message_id: Option<i32>,
 }
 

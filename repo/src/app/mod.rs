@@ -25,6 +25,8 @@ pub enum AppEvent {
     SaveCursor(i32),
     TogglePause,
     PromptResumeResult(bool),
+    TopicCreated(i32, String),
+    ArchiveTotalCount(i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -625,6 +627,13 @@ impl App {
                             };
                             match tg_clone.create_topic(group_id, topic_title_str).await {
                                 Ok(new_topic_id) => {
+                                    let _ = tx_clone
+                                        .send(AppEvent::TopicCreated(
+                                            new_topic_id,
+                                            topic_title_str.to_string(),
+                                        ))
+                                        .await;
+
                                     state_clone.channel_pairs[active_idx].dest_topic_id =
                                         Some(new_topic_id);
                                     state_clone.channel_pairs[active_idx].dest_topic_title =
@@ -735,6 +744,18 @@ impl App {
                     self.home_error = None;
                     self.active_view = ActiveView::Home;
                 }
+            }
+            AppEvent::TopicCreated(topic_id, title) => {
+                self.state.channel_pairs[self.active_pair_index].dest_topic_id = Some(topic_id);
+                self.state.channel_pairs[self.active_pair_index].dest_topic_title = Some(title);
+                self.state.auto_create_topic = false;
+                let state_clone = self.state.clone();
+                tokio::spawn(async move {
+                    let _ = state_clone.save().await;
+                });
+            }
+            AppEvent::ArchiveTotalCount(n) => {
+                self.source_message_count = Some(n);
             }
         }
     }

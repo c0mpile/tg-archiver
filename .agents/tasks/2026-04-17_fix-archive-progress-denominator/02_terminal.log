@@ -1,0 +1,11 @@
+cargo fmt -- --check
+# ... passed
+
+cargo clippy -- -D warnings
+# ... passed
+
+cargo build --release
+# ... passed
+
+cargo test -- --test-threads=1
+# ... passed (2 passed, 1 ignored)

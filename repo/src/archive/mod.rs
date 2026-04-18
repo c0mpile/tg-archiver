@@ -70,6 +70,9 @@ async fn run_archive_loop(
         highest_msg_id = msg.id();
     }
 
+    // Send total count to UI
+    let _ = tx.send(AppEvent::ArchiveTotalCount(highest_msg_id)).await;
+
     // Check if we need to apply post count threshold
     if state.post_count_threshold > 0 {
         let lowest_allowed = highest_msg_id - (state.post_count_threshold as i32) + 1;
