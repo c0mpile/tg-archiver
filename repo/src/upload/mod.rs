@@ -102,9 +102,22 @@ pub async fn upload_file(
     dest_topic_id: Option<i32>,
     caption: &str,
 ) -> Result<()> {
+    let file_name = local_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let mut file = tokio::fs::File::open(local_path)
+        .await
+        .context("Failed to open file for upload")?;
+    let file_size = file
+        .metadata()
+        .await
+        .context("Failed to read file metadata")?
+        .len() as usize;
     let uploaded = client
         .client
-        .upload_file(local_path)
+        .upload_stream(&mut file, file_size, file_name)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to upload file to Telegram server: {:#}", e))?;
 
