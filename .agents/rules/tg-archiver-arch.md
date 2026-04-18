@@ -21,6 +21,10 @@ downloads, no semaphore pool.** Forward-as-copy is rate-limited by Telegram's
 flood-wait mechanism, not by I/O concurrency. The worker sends `AppEvent`
 messages back to the main loop to update TUI state.
 
+The monitoring loop (`src/monitor/`) similarly runs as a single background task,
+processing channel pairs sequentially per tick. No concurrent archive runs or
+monitoring ticks are permitted.
+
 All Telegram API calls must respect `FloodWait` errors via the `retry_flood_wait!`
 macro (see Telegram Client Rules below). A bare unwrapped API call anywhere
 outside `src/telegram/` is a bug.
@@ -57,6 +61,11 @@ The archive worker lives in `src/archive/mod.rs`. Its operation is strictly sequ
 6. **Inter-chunk delay:** `tokio::time::sleep(Duration::from_millis(500))` between
    chunk requests. Never scan in a tight loop.
 
+The core worker logic in `run_archive_loop` is `pub(crate)` and accepts a
+`background` flag. When `true`, it suppresses progress/error events intended
+for the foreground UI and returns the final `last_forwarded_message_id`
+directly to the caller.
+
 ---
 
 ## Peer Cache Warm-up
@@ -81,6 +90,44 @@ When the user selects "Create Automatically" in the destination topic picker:
   - Save state atomically, then proceed to start the archive run
 - Only after this step should a `None` `dest_topic_id` be treated as a validation error
 - The topic title for auto-creation is derived from the source channel title
+
+---
+
+## Monitoring Mode Loop
+
+The monitoring loop lives in `src/monitor/mod.rs` and manages background
+synchronisation of multiple channel pairs:
+
+- **Lifecycle:** Spawns via `start_monitoring_loop` using a `tokio::time::interval`.
+  Cancelled via a `tokio::sync::watch` channel.
+- **Sequential Execution:** Iterates through `state.channel_pairs`, calling
+  `run_archive_loop(..., background: true)` for each.
+- **Interval:** Controlled by `state.poll_interval_secs` (default 300s).
+  A minimum of 60s is enforced at runtime.
+- **Events:**
+  - `MonitoringTick`: Sent at the start of each interval.
+  - `PairSynced`: Sent on successful pair sync; contains the new cursor.
+  - `PairError`: Sent on failure; errors are logged but not surfaced as
+    popups (retried next tick).
+
+---
+
+## Monitoring TUI View
+
+The `ActiveView::Monitoring` view (`src/tui/monitoring.rs`) provides a
+dashboard for background sync:
+
+- **Layout:** Three-panel design (header with countdown, pair table, help bar).
+- **State:** `App.next_tick_at` stores the `Instant` of the next planned tick
+  for countdown calculation.
+- **Interactions:**
+  - `m` (from Home): Enter monitoring mode and start loop.
+  - `q`: Cancel loop and return to Home.
+  - `s`: Cancel loop and sync selected pair in foreground.
+  - `a`: Cancel loop and enter setup flow for a new pair.
+  - `d`: Enter `DeletePairPrompt` for the selected pair.
+- **State Persistence:** `PairSynced` updates are saved to disk atomically
+  immediately upon receipt.
 
 ---
 

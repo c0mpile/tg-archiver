@@ -25,6 +25,7 @@ group using Telegram's server-side forward-as-copy mechanism (`messages.ForwardM
     ├── src/
     │   ├── main.rs             # entry point — initialises runtime, TUI, app state
     │   ├── app/                # top-level App struct, event loop, state machine
+    │   ├── monitor/            # background monitoring loop, interval management
     │   ├── tui/                # ratatui widgets, layout, input handling
     │   ├── telegram/           # grammers-client wrappers (client init, channel/group resolution, forward-as-copy)
     │   ├── archive/            # forward-as-copy worker, chunked message scanning, cursor management
@@ -155,6 +156,7 @@ Repository is **private**.
 | `archive` | forward-as-copy worker, chunked message scanning, cursor management |
 | `state` | Persistent state serialisation/deserialisation |
 | `config` | Config struct, `.env` loading |
+| `monitor` | background monitoring loop, interval management |
 | `app` | App struct, event loop, state machine |
 | `error` | Error types |
 
