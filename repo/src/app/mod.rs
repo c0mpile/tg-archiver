@@ -46,10 +46,15 @@ pub enum AppEvent {
     UploadModeSelected(UploadMode),
     UploadSyncStateFound(crate::upload::UploadSyncState),
     StartUploadRun,
-    UploadFileComplete { filename: String, index: usize, total: usize },
+    UploadFileComplete {
+        filename: String,
+        index: usize,
+        total: usize,
+    },
     UploadComplete,
     UploadError(String),
     UploadWarning(String),
+    UploadTopicCreated(i32, String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,6 +191,8 @@ pub struct App {
     pub upload_progress_total: usize,
     pub upload_progress_current_file: String,
     pub upload_warnings: Vec<String>,
+    pub upload_pause_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub upload_cancel_tx: Option<tokio::sync::watch::Sender<()>>,
 }
 
 impl App {
@@ -240,6 +247,8 @@ impl App {
             upload_progress_total: 0,
             upload_progress_current_file: String::new(),
             upload_warnings: Vec::new(),
+            upload_pause_tx: None,
+            upload_cancel_tx: None,
         }
     }
 
@@ -546,10 +555,12 @@ impl App {
                         _ => {}
                     },
                     ActiveView::UploadModeSelect => match key.code {
-                        crossterm::event::KeyCode::Char('s') | crossterm::event::KeyCode::Char('S') => {
+                        crossterm::event::KeyCode::Char('s')
+                        | crossterm::event::KeyCode::Char('S') => {
                             let _ = tx.try_send(AppEvent::UploadModeSelected(UploadMode::Select));
                         }
-                        crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') => {
+                        crossterm::event::KeyCode::Char('y')
+                        | crossterm::event::KeyCode::Char('Y') => {
                             let _ = tx.try_send(AppEvent::UploadModeSelected(UploadMode::Sync));
                         }
                         crossterm::event::KeyCode::Esc => {
@@ -558,15 +569,24 @@ impl App {
                         _ => {}
                     },
                     ActiveView::UploadSyncResume => match key.code {
-                        crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') | crossterm::event::KeyCode::Enter => {
-                            self.upload_dest_group_id = Some(self.upload_sync_state.as_ref().unwrap().dest_group_id);
-                            self.upload_dest_topic_id = self.upload_sync_state.as_ref().unwrap().dest_topic_id;
+                        crossterm::event::KeyCode::Char('y')
+                        | crossterm::event::KeyCode::Char('Y')
+                        | crossterm::event::KeyCode::Enter => {
+                            self.upload_dest_group_id =
+                                Some(self.upload_sync_state.as_ref().unwrap().dest_group_id);
+                            self.upload_dest_topic_id =
+                                self.upload_sync_state.as_ref().unwrap().dest_topic_id;
                             // Filter out already uploaded files from selection
                             if let Some(state) = &self.upload_sync_state {
                                 #[allow(clippy::collapsible_if)]
                                 for (i, entry) in self.upload_entries.iter().enumerate() {
-                                    if let UploadEntry::File { name, size_bytes, .. } = entry {
-                                        if !state.uploaded_files.iter().any(|f| f.filename == *name && f.size_bytes >= *size_bytes) {
+                                    if let UploadEntry::File {
+                                        name, size_bytes, ..
+                                    } = entry
+                                    {
+                                        if !state.uploaded_files.iter().any(|f| {
+                                            f.filename == *name && f.size_bytes >= *size_bytes
+                                        }) {
                                             self.upload_selected[i] = true;
                                         }
                                     }
@@ -574,7 +594,8 @@ impl App {
                             }
                             self.active_view = ActiveView::UploadFileSelect;
                         }
-                        crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('N') => {
+                        crossterm::event::KeyCode::Char('n')
+                        | crossterm::event::KeyCode::Char('N') => {
                             self.upload_sync_state = None;
                             self.active_view = ActiveView::UploadFileSelect;
                         }
@@ -587,7 +608,13 @@ impl App {
                         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
                             if !self.upload_entries.is_empty() {
                                 let i = match self.upload_list_state.selected() {
-                                    Some(i) => if i >= self.upload_entries.len() - 1 { i } else { i + 1 },
+                                    Some(i) => {
+                                        if i >= self.upload_entries.len() - 1 {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.upload_list_state.select(Some(i));
@@ -596,7 +623,13 @@ impl App {
                         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                             if !self.upload_entries.is_empty() {
                                 let i = match self.upload_list_state.selected() {
-                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.upload_list_state.select(Some(i));
@@ -624,7 +657,8 @@ impl App {
                                 let tg = std::sync::Arc::clone(telegram);
                                 let tx_clone = tx.clone();
                                 tokio::spawn(async move {
-                                    let res = tg.get_joined_groups().await.map_err(|e| e.to_string());
+                                    let res =
+                                        tg.get_joined_groups().await.map_err(|e| e.to_string());
                                     let _ = tx_clone.send(AppEvent::GroupsLoaded(res)).await;
                                 });
                             }
@@ -638,7 +672,13 @@ impl App {
                         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
                             if !self.available_groups.is_empty() {
                                 let i = match self.group_list_state.selected() {
-                                    Some(i) => if i >= self.available_groups.len() - 1 { i } else { i + 1 },
+                                    Some(i) => {
+                                        if i >= self.available_groups.len() - 1 {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.group_list_state.select(Some(i));
@@ -647,7 +687,13 @@ impl App {
                         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                             if !self.available_groups.is_empty() {
                                 let i = match self.group_list_state.selected() {
-                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.group_list_state.select(Some(i));
@@ -657,7 +703,9 @@ impl App {
                             self.active_view = ActiveView::UploadFileSelect;
                         }
                         crossterm::event::KeyCode::Enter => {
-                            if let Some(i) = self.group_list_state.selected() && let Some((id, title)) = self.available_groups.get(i) {
+                            if let Some(i) = self.group_list_state.selected()
+                                && let Some((id, title)) = self.available_groups.get(i)
+                            {
                                 self.upload_dest_group_id = Some(*id);
                                 self.upload_dest_group_title = title.clone();
                                 self.active_view = ActiveView::UploadTopicSelect;
@@ -665,7 +713,8 @@ impl App {
                                 let tx_clone = tx.clone();
                                 let group_id = *id;
                                 tokio::spawn(async move {
-                                    let res_topics = tg.list_topics(group_id).await.map_err(|e| e.to_string());
+                                    let res_topics =
+                                        tg.list_topics(group_id).await.map_err(|e| e.to_string());
                                     let _ = tx_clone.send(AppEvent::TopicsLoaded(res_topics)).await;
                                 });
                             }
@@ -676,7 +725,13 @@ impl App {
                         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
                             if !self.available_topics.is_empty() {
                                 let i = match self.topic_list_state.selected() {
-                                    Some(i) => if i >= self.available_topics.len() { i } else { i + 1 }, // Note: topics length + 1 because of manual entry option
+                                    Some(i) => {
+                                        if i >= self.available_topics.len() {
+                                            i
+                                        } else {
+                                            i + 1
+                                        }
+                                    } // Note: topics length + 1 because of manual entry option
                                     None => 0,
                                 };
                                 self.topic_list_state.select(Some(i));
@@ -685,7 +740,13 @@ impl App {
                         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
                             if !self.available_topics.is_empty() {
                                 let i = match self.topic_list_state.selected() {
-                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    Some(i) => {
+                                        if i == 0 {
+                                            0
+                                        } else {
+                                            i - 1
+                                        }
+                                    }
                                     None => 0,
                                 };
                                 self.topic_list_state.select(Some(i));
@@ -729,11 +790,15 @@ impl App {
                                 tokio::spawn(async move {
                                     match tg.create_topic(group_id, &title).await {
                                         Ok(id) => {
-                                            let _ = tx_clone.send(AppEvent::TopicCreated(id, title)).await;
+                                            let _ = tx_clone
+                                                .send(AppEvent::UploadTopicCreated(id, title))
+                                                .await;
                                         }
                                         Err(e) => {
                                             // For now just error as topicsloaded
-                                            let _ = tx_clone.send(AppEvent::TopicsLoaded(Err(e.to_string()))).await;
+                                            let _ = tx_clone
+                                                .send(AppEvent::TopicsLoaded(Err(e.to_string())))
+                                                .await;
                                         }
                                     }
                                 });
@@ -742,16 +807,31 @@ impl App {
                         _ => {}
                     },
                     ActiveView::UploadProgress => match key.code {
-                        crossterm::event::KeyCode::Char('p') | crossterm::event::KeyCode::Char(' ') => {
-                            let _ = tx.try_send(AppEvent::TogglePause);
-                        }
-                        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
-                            self.active_view = ActiveView::Home;
-                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
-                                let _ = tx_cancel.send(true);
+                        crossterm::event::KeyCode::Char('p')
+                        | crossterm::event::KeyCode::Char(' ') => {
+                            if let Some(tx) = &self.upload_pause_tx {
+                                let current =
+                                    self.is_paused.load(std::sync::atomic::Ordering::SeqCst);
+                                let new_val = !current;
+                                self.is_paused
+                                    .store(new_val, std::sync::atomic::Ordering::SeqCst);
+                                let _ = tx.send_replace(new_val);
                             }
                         }
-                        crossterm::event::KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
+                            if let Some(tx) = self.upload_cancel_tx.take() {
+                                let _ = tx.send(());
+                            }
+                            self.upload_pause_tx = None;
+                            self.is_paused
+                                .store(false, std::sync::atomic::Ordering::SeqCst);
+                            self.active_view = ActiveView::Home;
+                        }
+                        crossterm::event::KeyCode::Char('c')
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
                             self.should_quit = true;
                         }
                         _ => {}
@@ -1273,15 +1353,18 @@ impl App {
                 }
             }
             AppEvent::EnterUpload => {
-                self.upload_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                self.upload_cwd =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 self.upload_entries.clear();
-                
+
                 if let Ok(entries) = std::fs::read_dir(&self.upload_cwd) {
                     for entry in entries.flatten() {
                         if let Ok(metadata) = entry.metadata() {
                             let name = entry.file_name().to_string_lossy().into_owned();
-                            if name.starts_with('.') { continue; } // skip hidden
-                            
+                            if name.starts_with('.') {
+                                continue;
+                            } // skip hidden
+
                             if metadata.is_dir() {
                                 self.upload_entries.push(UploadEntry::Dir {
                                     name,
@@ -1298,17 +1381,26 @@ impl App {
                         }
                     }
                 }
-                
+
                 // Default sort: alphabetical
                 self.upload_sort = UploadSort::Alphabetical;
                 self.upload_entries.sort_by(|a, b| {
-                    let name_a = match a { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
-                    let name_b = match b { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                    let name_a = match a {
+                        UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name,
+                    };
+                    let name_b = match b {
+                        UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name,
+                    };
                     name_a.cmp(name_b)
                 });
-                
+
                 self.upload_selected = vec![false; self.upload_entries.len()];
-                self.upload_list_state.select(if self.upload_entries.is_empty() { None } else { Some(0) });
+                self.upload_list_state
+                    .select(if self.upload_entries.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    });
                 self.active_view = ActiveView::UploadModeSelect;
             }
             AppEvent::UploadFileToggled(idx) => {
@@ -1330,17 +1422,36 @@ impl App {
                 let sort_mode = self.upload_sort.clone();
                 // We need to sort entries and preserve selection. But for simplicity, we'll just clear selection on sort toggle or map it.
                 // Rebuilding selected array is tricky, so we'll just clear it for safety, or keep a tuple. Let's keep a tuple.
-                let mut combined: Vec<_> = self.upload_entries.clone().into_iter().zip(self.upload_selected.clone()).collect();
+                let mut combined: Vec<_> = self
+                    .upload_entries
+                    .clone()
+                    .into_iter()
+                    .zip(self.upload_selected.clone())
+                    .collect();
                 combined.sort_by(|(a, _), (b, _)| {
                     match sort_mode {
                         UploadSort::Alphabetical => {
-                            let name_a = match a { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
-                            let name_b = match b { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                            let name_a = match a {
+                                UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => {
+                                    name
+                                }
+                            };
+                            let name_b = match b {
+                                UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => {
+                                    name
+                                }
+                            };
                             name_a.cmp(name_b)
                         }
                         UploadSort::ByModDate => {
-                            let mod_a = match a { UploadEntry::File { modified, .. } => *modified, UploadEntry::Dir { .. } => std::time::UNIX_EPOCH };
-                            let mod_b = match b { UploadEntry::File { modified, .. } => *modified, UploadEntry::Dir { .. } => std::time::UNIX_EPOCH };
+                            let mod_a = match a {
+                                UploadEntry::File { modified, .. } => *modified,
+                                UploadEntry::Dir { .. } => std::time::UNIX_EPOCH,
+                            };
+                            let mod_b = match b {
+                                UploadEntry::File { modified, .. } => *modified,
+                                UploadEntry::Dir { .. } => std::time::UNIX_EPOCH,
+                            };
                             mod_b.cmp(&mod_a) // Newest first
                         }
                     }
@@ -1360,11 +1471,15 @@ impl App {
                         let cwd = self.upload_cwd.clone();
                         let tx_clone = tx.clone();
                         tokio::spawn(async move {
-                            if let Ok(Some(state)) = crate::upload::UploadSyncState::load(&cwd).await {
+                            if let Ok(Some(state)) =
+                                crate::upload::UploadSyncState::load(&cwd).await
+                            {
                                 let _ = tx_clone.send(AppEvent::UploadSyncStateFound(state)).await;
                             } else {
                                 // Transition to file select
-                                let _ = tx_clone.send(AppEvent::UploadModeSelected(UploadMode::Select)).await; // just force UI transition
+                                let _ = tx_clone
+                                    .send(AppEvent::UploadModeSelected(UploadMode::Select))
+                                    .await; // just force UI transition
                             }
                         });
                     }
@@ -1380,8 +1495,9 @@ impl App {
                 self.upload_progress_total = 0;
                 self.upload_progress_current_file = String::new();
                 self.upload_warnings.clear();
-                self.is_paused.store(false, std::sync::atomic::Ordering::SeqCst);
-                
+                self.is_paused
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+
                 let client = Arc::clone(telegram);
                 let cwd = self.upload_cwd.clone();
                 let entries = self.upload_entries.clone();
@@ -1392,10 +1508,10 @@ impl App {
                 let tx_clone = tx.clone();
                 let paused_rx_tx = tokio::sync::watch::channel(false);
                 let cancel_rx_tx = tokio::sync::watch::channel(());
-                
-                // For a full implementation, we'd store these transmitters in App to allow cancel/pause
-                // We'll just pass a dummy one for now, or update App to store them if we want to support pause
-                
+
+                self.upload_pause_tx = Some(paused_rx_tx.0);
+                self.upload_cancel_tx = Some(cancel_rx_tx.0);
+
                 tokio::spawn(async move {
                     if let Err(e) = crate::upload::run_upload_loop(
                         client,
@@ -1408,12 +1524,18 @@ impl App {
                         tx_clone.clone(),
                         paused_rx_tx.1,
                         cancel_rx_tx.1,
-                    ).await {
+                    )
+                    .await
+                    {
                         let _ = tx_clone.send(AppEvent::UploadError(e.to_string())).await;
                     }
                 });
             }
-            AppEvent::UploadFileComplete { filename, index, total } => {
+            AppEvent::UploadFileComplete {
+                filename,
+                index,
+                total,
+            } => {
                 self.upload_progress_current_file = filename;
                 self.upload_progress_current = index;
                 self.upload_progress_total = total;
@@ -1423,12 +1545,22 @@ impl App {
                 if self.upload_progress_total > 0 {
                     self.upload_progress_current = self.upload_progress_total;
                 }
+                self.upload_pause_tx = None;
+                self.upload_cancel_tx = None;
             }
             AppEvent::UploadError(msg) => {
                 self.home_error = Some(format!("Upload error: {}", msg));
+                self.upload_pause_tx = None;
+                self.upload_cancel_tx = None;
             }
             AppEvent::UploadWarning(msg) => {
                 self.upload_warnings.push(msg);
+            }
+            AppEvent::UploadTopicCreated(topic_id, title) => {
+                self.upload_dest_topic_id = Some(topic_id);
+                self.upload_dest_topic_title = Some(title);
+                self.active_view = ActiveView::UploadProgress;
+                let _ = tx.try_send(AppEvent::StartUploadRun);
             }
         }
     }

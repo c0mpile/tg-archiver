@@ -1,0 +1,26 @@
+# Terminal Log - Fix Upload Bugs
+
+```bash
+# Created task directory
+mkdir -p /home/kevin/dev/tg-archiver/.agents/tasks/2026-04-18_fix-upload-bugs
+
+# Verified current state and applied changes to src/app/mod.rs
+
+# Verification (fmt, clippy, build, test)
+cargo fmt -- src/app/mod.rs && cargo clippy -- -D warnings && cargo build --release && cargo test -- --test-threads=1
+# Output:
+#    Checking tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+#    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+#   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+#    Finished `release` profile [optimized] target(s) in 4.76s
+#   Compiling tg-archiver v0.1.0 (/home/kevin/dev/tg-archiver/repo)
+#    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.83s
+#     Running unittests src/main.rs (target/debug/deps/tg_archiver-4c42ace4694c6f2b)
+#
+# running 3 tests
+# test state::tests::test_migration_compatibility ... ok
+# test state::tests::test_round_trip ... ok
+# test telegram::tests::test_init_telegram_client ... ignored
+#
+# test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

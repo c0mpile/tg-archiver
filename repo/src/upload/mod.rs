@@ -102,7 +102,10 @@ pub async fn upload_file(
         .await
         .context("Failed to upload file to Telegram server")?;
 
-    let ext = local_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = local_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
     let mime_type = match ext.to_lowercase().as_str() {
         "mp4" => "video/mp4",
         "mkv" => "video/x-matroska",
@@ -122,7 +125,8 @@ pub async fn upload_file(
         "7z" => "application/x-7z-compressed",
         "txt" => "text/plain",
         _ => "application/octet-stream",
-    }.to_string();
+    }
+    .to_string();
 
     let input_peer = client
         .get_input_peer(dest_group_id)
@@ -259,13 +263,22 @@ pub async fn run_upload_loop(
             }
         }
 
-        let rel_path = path.strip_prefix(&cwd).unwrap_or(&path).to_string_lossy().into_owned();
+        let rel_path = path
+            .strip_prefix(&cwd)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
         let metadata = fs::metadata(&path).await;
-        
+
         let size_bytes = match metadata {
             Ok(m) => m.len(),
             Err(e) => {
-                app_tx.send(AppEvent::UploadWarning(format!("Skipped '{}': {}", rel_path, e))).await?;
+                app_tx
+                    .send(AppEvent::UploadWarning(format!(
+                        "Skipped '{}': {}",
+                        rel_path, e
+                    )))
+                    .await?;
                 continue;
             }
         };
@@ -274,25 +287,39 @@ pub async fn run_upload_loop(
             if let Some(existing) = state.uploaded_files.iter().find(|f| f.filename == rel_path) {
                 if size_bytes <= existing.size_bytes {
                     // Skip
-                    app_tx.send(AppEvent::UploadFileComplete {
-                        filename: rel_path.clone(),
-                        index: idx + 1,
-                        total,
-                    }).await?;
+                    app_tx
+                        .send(AppEvent::UploadFileComplete {
+                            filename: rel_path.clone(),
+                            index: idx + 1,
+                            total,
+                        })
+                        .await?;
                     continue;
                 }
             }
         }
 
-        let caption = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Unknown".to_string());
+        let caption = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Unknown".to_string());
 
         if let Err(e) = upload_file(&client, &path, dest_group_id, dest_topic_id, &caption).await {
-            app_tx.send(AppEvent::UploadWarning(format!("Failed to upload '{}': {}", rel_path, e))).await?;
+            app_tx
+                .send(AppEvent::UploadWarning(format!(
+                    "Failed to upload '{}': {}",
+                    rel_path, e
+                )))
+                .await?;
             continue;
         }
 
         if matches!(mode, UploadMode::Sync) {
-            if let Some(existing) = state.uploaded_files.iter_mut().find(|f| f.filename == rel_path) {
+            if let Some(existing) = state
+                .uploaded_files
+                .iter_mut()
+                .find(|f| f.filename == rel_path)
+            {
                 existing.size_bytes = size_bytes;
             } else {
                 state.uploaded_files.push(UploadedFile {
@@ -301,15 +328,22 @@ pub async fn run_upload_loop(
                 });
             }
             if let Err(e) = state.save(&cwd).await {
-                 app_tx.send(AppEvent::UploadWarning(format!("Failed to save state: {}", e))).await?;
+                app_tx
+                    .send(AppEvent::UploadWarning(format!(
+                        "Failed to save state: {}",
+                        e
+                    )))
+                    .await?;
             }
         }
 
-        app_tx.send(AppEvent::UploadFileComplete {
-            filename: rel_path.clone(),
-            index: idx + 1,
-            total,
-        }).await?;
+        app_tx
+            .send(AppEvent::UploadFileComplete {
+                filename: rel_path.clone(),
+                index: idx + 1,
+                total,
+            })
+            .await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     }

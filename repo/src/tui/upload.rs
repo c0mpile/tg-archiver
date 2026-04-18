@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Gauge},
+    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
 
 pub fn render_upload_mode_select(f: &mut Frame, _app: &mut App) {
@@ -59,7 +59,10 @@ pub fn render_upload_file_select(f: &mut Frame, app: &mut App) {
         .split(size);
 
     let block = Block::default()
-        .title(format!("Select Files to Upload (Sort: {:?})", app.upload_sort))
+        .title(format!(
+            "Select Files to Upload (Sort: {:?})",
+            app.upload_sort
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
@@ -71,7 +74,10 @@ pub fn render_upload_file_select(f: &mut Frame, app: &mut App) {
             UploadEntry::File { name, .. } => name.clone(),
             UploadEntry::Dir { name, .. } => format!("{}/", name),
         };
-        items.push(ListItem::new(Line::from(Span::raw(format!("{} {}", check, name)))));
+        items.push(ListItem::new(Line::from(Span::raw(format!(
+            "{} {}",
+            check, name
+        )))));
     }
 
     if items.is_empty() {
@@ -126,7 +132,8 @@ pub fn render_upload_topic_select(f: &mut Frame, app: &mut App) {
         ))),
     );
 
-    if app.is_loading_groups { // reuse flag
+    if app.is_loading_groups {
+        // reuse flag
         let p = Paragraph::new("Loading topics...").block(block);
         f.render_widget(p, chunks[0]);
     } else {
@@ -139,8 +146,9 @@ pub fn render_upload_topic_select(f: &mut Frame, app: &mut App) {
         f.render_stateful_widget(list, chunks[0], &mut app.topic_list_state);
     }
 
-    let help_text = Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
-        .style(Style::default().fg(Color::DarkGray));
+    let help_text =
+        Paragraph::new("Use Up/Down arrows to select, Enter to confirm, Esc to cancel.")
+            .style(Style::default().fg(Color::DarkGray));
     f.render_widget(help_text, chunks[1]);
 }
 
@@ -210,23 +218,39 @@ pub fn render_upload_progress(f: &mut Frame, app: &mut App) {
         .block(Block::default().title("Progress").borders(Borders::ALL))
         .gauge_style(Style::default().fg(Color::Cyan).bg(Color::Black))
         .percent(percent.min(100))
-        .label(format!("{}/{}", app.upload_progress_current, app.upload_progress_total));
+        .label(format!(
+            "{}/{}",
+            app.upload_progress_current, app.upload_progress_total
+        ));
 
     f.render_widget(gauge, chunks[1]);
 
-    let mut lines = vec![Line::from("Press 'p' to pause/resume, 'q' or Esc to cancel.")];
-    
+    let mut lines = vec![Line::from(
+        "Press 'p' to pause/resume, 'q' or Esc to cancel.",
+    )];
+
     if app.is_paused.load(std::sync::atomic::Ordering::SeqCst) {
-        lines.push(Line::from(Span::styled("UPLOAD PAUSED", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(Span::styled(
+            "UPLOAD PAUSED",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
     }
 
     if let Some(err) = &app.home_error {
-        lines.push(Line::from(Span::styled(format!("ERROR: {}", err), Style::default().fg(Color::Red))));
+        lines.push(Line::from(Span::styled(
+            format!("ERROR: {}", err),
+            Style::default().fg(Color::Red),
+        )));
     }
 
     if !app.upload_warnings.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Warnings (Skipped files):", Style::default().fg(Color::Yellow))));
+        lines.push(Line::from(Span::styled(
+            "Warnings (Skipped files):",
+            Style::default().fg(Color::Yellow),
+        )));
         for w in &app.upload_warnings {
             lines.push(Line::from(w.as_str()));
         }
