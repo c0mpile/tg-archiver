@@ -6,6 +6,7 @@ pub mod monitor;
 pub mod state;
 mod telegram;
 mod tui;
+pub mod upload;
 
 use app::{App, AppEvent};
 use crossterm::{

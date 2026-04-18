@@ -10,6 +10,7 @@ use ratatui::{
 pub mod archive_progress;
 pub mod filter_config;
 pub mod monitoring;
+pub mod upload;
 
 pub fn render(f: &mut Frame, app: &mut App) {
     match app.active_view {
@@ -23,6 +24,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ActiveView::Monitoring => monitoring::render_monitoring(f, app),
         ActiveView::DeletePairPrompt => monitoring::render_delete_prompt(f, app),
         ActiveView::IntervalConfig => monitoring::render_interval_config(f, app),
+        ActiveView::UploadModeSelect => upload::render_upload_mode_select(f, app),
+        ActiveView::UploadSyncResume => upload::render_upload_sync_resume(f, app),
+        ActiveView::UploadFileSelect => upload::render_upload_file_select(f, app),
+        ActiveView::UploadGroupSelect => upload::render_upload_group_select(f, app),
+        ActiveView::UploadTopicSelect => upload::render_upload_topic_select(f, app),
+        ActiveView::UploadTopicNameEntry => upload::render_upload_topic_name_entry(f, app),
+        ActiveView::UploadProgress => upload::render_upload_progress(f, app),
     }
 }
 

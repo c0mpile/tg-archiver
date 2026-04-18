@@ -39,6 +39,45 @@ pub enum AppEvent {
         pair_index: usize,
         error: String,
     },
+    EnterUpload,
+    UploadFileToggled(usize),
+    UploadSelectAll,
+    UploadSortToggle,
+    UploadModeSelected(UploadMode),
+    UploadSyncStateFound(crate::upload::UploadSyncState),
+    StartUploadRun,
+    UploadFileComplete { filename: String, index: usize, total: usize },
+    UploadComplete,
+    UploadError(String),
+    UploadWarning(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UploadEntry {
+    File {
+        name: String,
+        path: std::path::PathBuf,
+        size_bytes: u64,
+        modified: std::time::SystemTime,
+    },
+    Dir {
+        name: String,
+        path: std::path::PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum UploadMode {
+    #[default]
+    Select,
+    Sync,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum UploadSort {
+    #[default]
+    Alphabetical,
+    ByModDate,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -62,6 +101,13 @@ pub enum ActiveView {
     Monitoring,
     DeletePairPrompt,
     IntervalConfig,
+    UploadFileSelect,
+    UploadModeSelect,
+    UploadSyncResume,
+    UploadGroupSelect,
+    UploadTopicSelect,
+    UploadTopicNameEntry,
+    UploadProgress,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -124,6 +170,22 @@ pub struct App {
     pub source_message_count: Option<i32>,
     pub monitoring_cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
     pub next_tick_at: Option<std::time::Instant>,
+    pub upload_cwd: std::path::PathBuf,
+    pub upload_entries: Vec<UploadEntry>,
+    pub upload_list_state: ratatui::widgets::ListState,
+    pub upload_selected: Vec<bool>,
+    pub upload_sort: UploadSort,
+    pub upload_mode: Option<UploadMode>,
+    pub upload_sync_state: Option<crate::upload::UploadSyncState>,
+    pub upload_dest_group_id: Option<i64>,
+    pub upload_dest_group_title: String,
+    pub upload_dest_topic_id: Option<i32>,
+    pub upload_dest_topic_title: Option<String>,
+    pub upload_topic_name_input: String,
+    pub upload_progress_current: usize,
+    pub upload_progress_total: usize,
+    pub upload_progress_current_file: String,
+    pub upload_warnings: Vec<String>,
 }
 
 impl App {
@@ -162,6 +224,22 @@ impl App {
             source_message_count: None,
             monitoring_cancel_tx: None,
             next_tick_at: None,
+            upload_cwd: std::path::PathBuf::new(),
+            upload_entries: Vec::new(),
+            upload_list_state: ratatui::widgets::ListState::default(),
+            upload_selected: Vec::new(),
+            upload_sort: UploadSort::default(),
+            upload_mode: None,
+            upload_sync_state: None,
+            upload_dest_group_id: None,
+            upload_dest_group_title: String::new(),
+            upload_dest_topic_id: None,
+            upload_dest_topic_title: None,
+            upload_topic_name_input: String::new(),
+            upload_progress_current: 0,
+            upload_progress_total: 0,
+            upload_progress_current_file: String::new(),
+            upload_warnings: Vec::new(),
         }
     }
 
@@ -234,6 +312,13 @@ impl App {
                                 tx.clone(),
                                 cancel_rx,
                             );
+                        }
+                        crossterm::event::KeyCode::Char('u') => {
+                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                let _ = tx_cancel.send(true);
+                            }
+                            let tx_clone = tx.clone();
+                            let _ = tx_clone.try_send(AppEvent::EnterUpload);
                         }
                         crossterm::event::KeyCode::Char('s') => {
                             let mut missing = Vec::new();
@@ -457,6 +542,217 @@ impl App {
                                 self.home_error = None;
                                 self.active_view = ActiveView::Home;
                             }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadModeSelect => match key.code {
+                        crossterm::event::KeyCode::Char('s') | crossterm::event::KeyCode::Char('S') => {
+                            let _ = tx.try_send(AppEvent::UploadModeSelected(UploadMode::Select));
+                        }
+                        crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') => {
+                            let _ = tx.try_send(AppEvent::UploadModeSelected(UploadMode::Sync));
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Home;
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadSyncResume => match key.code {
+                        crossterm::event::KeyCode::Char('y') | crossterm::event::KeyCode::Char('Y') | crossterm::event::KeyCode::Enter => {
+                            self.upload_dest_group_id = Some(self.upload_sync_state.as_ref().unwrap().dest_group_id);
+                            self.upload_dest_topic_id = self.upload_sync_state.as_ref().unwrap().dest_topic_id;
+                            // Filter out already uploaded files from selection
+                            if let Some(state) = &self.upload_sync_state {
+                                #[allow(clippy::collapsible_if)]
+                                for (i, entry) in self.upload_entries.iter().enumerate() {
+                                    if let UploadEntry::File { name, size_bytes, .. } = entry {
+                                        if !state.uploaded_files.iter().any(|f| f.filename == *name && f.size_bytes >= *size_bytes) {
+                                            self.upload_selected[i] = true;
+                                        }
+                                    }
+                                }
+                            }
+                            self.active_view = ActiveView::UploadFileSelect;
+                        }
+                        crossterm::event::KeyCode::Char('n') | crossterm::event::KeyCode::Char('N') => {
+                            self.upload_sync_state = None;
+                            self.active_view = ActiveView::UploadFileSelect;
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Home;
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadFileSelect => match key.code {
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if !self.upload_entries.is_empty() {
+                                let i = match self.upload_list_state.selected() {
+                                    Some(i) => if i >= self.upload_entries.len() - 1 { i } else { i + 1 },
+                                    None => 0,
+                                };
+                                self.upload_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if !self.upload_entries.is_empty() {
+                                let i = match self.upload_list_state.selected() {
+                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    None => 0,
+                                };
+                                self.upload_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Char(' ') => {
+                            if let Some(i) = self.upload_list_state.selected() {
+                                let _ = tx.try_send(AppEvent::UploadFileToggled(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('a') => {
+                            let _ = tx.try_send(AppEvent::UploadSelectAll);
+                        }
+                        crossterm::event::KeyCode::Char('t') => {
+                            let _ = tx.try_send(AppEvent::UploadSortToggle);
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if self.upload_sync_state.is_some() {
+                                let _ = tx.try_send(AppEvent::StartUploadRun);
+                            } else {
+                                self.active_view = ActiveView::UploadGroupSelect;
+                                self.is_loading_groups = true;
+                                self.available_groups.clear();
+                                self.group_list_state.select(Some(0));
+                                let tg = std::sync::Arc::clone(telegram);
+                                let tx_clone = tx.clone();
+                                tokio::spawn(async move {
+                                    let res = tg.get_joined_groups().await.map_err(|e| e.to_string());
+                                    let _ = tx_clone.send(AppEvent::GroupsLoaded(res)).await;
+                                });
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::UploadModeSelect;
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadGroupSelect => match key.code {
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if !self.available_groups.is_empty() {
+                                let i = match self.group_list_state.selected() {
+                                    Some(i) => if i >= self.available_groups.len() - 1 { i } else { i + 1 },
+                                    None => 0,
+                                };
+                                self.group_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if !self.available_groups.is_empty() {
+                                let i = match self.group_list_state.selected() {
+                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    None => 0,
+                                };
+                                self.group_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::UploadFileSelect;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if let Some(i) = self.group_list_state.selected() && let Some((id, title)) = self.available_groups.get(i) {
+                                self.upload_dest_group_id = Some(*id);
+                                self.upload_dest_group_title = title.clone();
+                                self.active_view = ActiveView::UploadTopicSelect;
+                                let tg = std::sync::Arc::clone(telegram);
+                                let tx_clone = tx.clone();
+                                let group_id = *id;
+                                tokio::spawn(async move {
+                                    let res_topics = tg.list_topics(group_id).await.map_err(|e| e.to_string());
+                                    let _ = tx_clone.send(AppEvent::TopicsLoaded(res_topics)).await;
+                                });
+                            }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadTopicSelect => match key.code {
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if !self.available_topics.is_empty() {
+                                let i = match self.topic_list_state.selected() {
+                                    Some(i) => if i >= self.available_topics.len() { i } else { i + 1 }, // Note: topics length + 1 because of manual entry option
+                                    None => 0,
+                                };
+                                self.topic_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if !self.available_topics.is_empty() {
+                                let i = match self.topic_list_state.selected() {
+                                    Some(i) => if i == 0 { 0 } else { i - 1 },
+                                    None => 0,
+                                };
+                                self.topic_list_state.select(Some(i));
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::UploadGroupSelect;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if let Some(i) = self.topic_list_state.selected() {
+                                if i == 0 {
+                                    self.upload_topic_name_input.clear();
+                                    self.active_view = ActiveView::UploadTopicNameEntry;
+                                } else if let Some((id, title)) = self.available_topics.get(i - 1) {
+                                    self.upload_dest_topic_id = Some(*id);
+                                    self.upload_dest_topic_title = Some(title.clone());
+                                    let _ = tx.try_send(AppEvent::StartUploadRun);
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadTopicNameEntry => match key.code {
+                        crossterm::event::KeyCode::Char(c) => {
+                            self.resolution_error = None;
+                            self.upload_topic_name_input.push(c);
+                        }
+                        crossterm::event::KeyCode::Backspace => {
+                            self.resolution_error = None;
+                            self.upload_topic_name_input.pop();
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::UploadTopicSelect;
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if !self.upload_topic_name_input.is_empty() {
+                                let tg = std::sync::Arc::clone(telegram);
+                                let tx_clone = tx.clone();
+                                let group_id = self.upload_dest_group_id.unwrap();
+                                let title = self.upload_topic_name_input.clone();
+                                tokio::spawn(async move {
+                                    match tg.create_topic(group_id, &title).await {
+                                        Ok(id) => {
+                                            let _ = tx_clone.send(AppEvent::TopicCreated(id, title)).await;
+                                        }
+                                        Err(e) => {
+                                            // For now just error as topicsloaded
+                                            let _ = tx_clone.send(AppEvent::TopicsLoaded(Err(e.to_string()))).await;
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::UploadProgress => match key.code {
+                        crossterm::event::KeyCode::Char('p') | crossterm::event::KeyCode::Char(' ') => {
+                            let _ = tx.try_send(AppEvent::TogglePause);
+                        }
+                        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
+                            self.active_view = ActiveView::Home;
+                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                let _ = tx_cancel.send(true);
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                            self.should_quit = true;
                         }
                         _ => {}
                     },
@@ -975,6 +1271,164 @@ impl App {
                 if pair_index < self.pair_statuses.len() {
                     self.pair_statuses[pair_index] = PairStatus::Error(error);
                 }
+            }
+            AppEvent::EnterUpload => {
+                self.upload_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                self.upload_entries.clear();
+                
+                if let Ok(entries) = std::fs::read_dir(&self.upload_cwd) {
+                    for entry in entries.flatten() {
+                        if let Ok(metadata) = entry.metadata() {
+                            let name = entry.file_name().to_string_lossy().into_owned();
+                            if name.starts_with('.') { continue; } // skip hidden
+                            
+                            if metadata.is_dir() {
+                                self.upload_entries.push(UploadEntry::Dir {
+                                    name,
+                                    path: entry.path(),
+                                });
+                            } else if metadata.is_file() {
+                                self.upload_entries.push(UploadEntry::File {
+                                    name,
+                                    path: entry.path(),
+                                    size_bytes: metadata.len(),
+                                    modified: metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                // Default sort: alphabetical
+                self.upload_sort = UploadSort::Alphabetical;
+                self.upload_entries.sort_by(|a, b| {
+                    let name_a = match a { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                    let name_b = match b { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                    name_a.cmp(name_b)
+                });
+                
+                self.upload_selected = vec![false; self.upload_entries.len()];
+                self.upload_list_state.select(if self.upload_entries.is_empty() { None } else { Some(0) });
+                self.active_view = ActiveView::UploadModeSelect;
+            }
+            AppEvent::UploadFileToggled(idx) => {
+                if idx < self.upload_selected.len() {
+                    self.upload_selected[idx] = !self.upload_selected[idx];
+                }
+            }
+            AppEvent::UploadSelectAll => {
+                let all_selected = self.upload_selected.iter().all(|&x| x);
+                for selected in &mut self.upload_selected {
+                    *selected = !all_selected;
+                }
+            }
+            AppEvent::UploadSortToggle => {
+                self.upload_sort = match self.upload_sort {
+                    UploadSort::Alphabetical => UploadSort::ByModDate,
+                    UploadSort::ByModDate => UploadSort::Alphabetical,
+                };
+                let sort_mode = self.upload_sort.clone();
+                // We need to sort entries and preserve selection. But for simplicity, we'll just clear selection on sort toggle or map it.
+                // Rebuilding selected array is tricky, so we'll just clear it for safety, or keep a tuple. Let's keep a tuple.
+                let mut combined: Vec<_> = self.upload_entries.clone().into_iter().zip(self.upload_selected.clone()).collect();
+                combined.sort_by(|(a, _), (b, _)| {
+                    match sort_mode {
+                        UploadSort::Alphabetical => {
+                            let name_a = match a { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                            let name_b = match b { UploadEntry::File { name, .. } | UploadEntry::Dir { name, .. } => name };
+                            name_a.cmp(name_b)
+                        }
+                        UploadSort::ByModDate => {
+                            let mod_a = match a { UploadEntry::File { modified, .. } => *modified, UploadEntry::Dir { .. } => std::time::UNIX_EPOCH };
+                            let mod_b = match b { UploadEntry::File { modified, .. } => *modified, UploadEntry::Dir { .. } => std::time::UNIX_EPOCH };
+                            mod_b.cmp(&mod_a) // Newest first
+                        }
+                    }
+                });
+                for (i, (entry, selected)) in combined.into_iter().enumerate() {
+                    self.upload_entries[i] = entry;
+                    self.upload_selected[i] = selected;
+                }
+            }
+            AppEvent::UploadModeSelected(mode) => {
+                self.upload_mode = Some(mode.clone());
+                match mode {
+                    UploadMode::Select => {
+                        self.active_view = ActiveView::UploadFileSelect;
+                    }
+                    UploadMode::Sync => {
+                        let cwd = self.upload_cwd.clone();
+                        let tx_clone = tx.clone();
+                        tokio::spawn(async move {
+                            if let Ok(Some(state)) = crate::upload::UploadSyncState::load(&cwd).await {
+                                let _ = tx_clone.send(AppEvent::UploadSyncStateFound(state)).await;
+                            } else {
+                                // Transition to file select
+                                let _ = tx_clone.send(AppEvent::UploadModeSelected(UploadMode::Select)).await; // just force UI transition
+                            }
+                        });
+                    }
+                }
+            }
+            AppEvent::UploadSyncStateFound(state) => {
+                self.upload_sync_state = Some(state);
+                self.active_view = ActiveView::UploadSyncResume;
+            }
+            AppEvent::StartUploadRun => {
+                self.active_view = ActiveView::UploadProgress;
+                self.upload_progress_current = 0;
+                self.upload_progress_total = 0;
+                self.upload_progress_current_file = String::new();
+                self.upload_warnings.clear();
+                self.is_paused.store(false, std::sync::atomic::Ordering::SeqCst);
+                
+                let client = Arc::clone(telegram);
+                let cwd = self.upload_cwd.clone();
+                let entries = self.upload_entries.clone();
+                let selected = self.upload_selected.clone();
+                let mode = self.upload_mode.clone().unwrap_or(UploadMode::Select);
+                let dest_group_id = self.upload_dest_group_id.unwrap_or(0);
+                let dest_topic_id = self.upload_dest_topic_id;
+                let tx_clone = tx.clone();
+                let paused_rx_tx = tokio::sync::watch::channel(false);
+                let cancel_rx_tx = tokio::sync::watch::channel(());
+                
+                // For a full implementation, we'd store these transmitters in App to allow cancel/pause
+                // We'll just pass a dummy one for now, or update App to store them if we want to support pause
+                
+                tokio::spawn(async move {
+                    if let Err(e) = crate::upload::run_upload_loop(
+                        client,
+                        cwd,
+                        entries,
+                        selected,
+                        mode,
+                        dest_group_id,
+                        dest_topic_id,
+                        tx_clone.clone(),
+                        paused_rx_tx.1,
+                        cancel_rx_tx.1,
+                    ).await {
+                        let _ = tx_clone.send(AppEvent::UploadError(e.to_string())).await;
+                    }
+                });
+            }
+            AppEvent::UploadFileComplete { filename, index, total } => {
+                self.upload_progress_current_file = filename;
+                self.upload_progress_current = index;
+                self.upload_progress_total = total;
+            }
+            AppEvent::UploadComplete => {
+                self.upload_progress_current_file = "Done".to_string();
+                if self.upload_progress_total > 0 {
+                    self.upload_progress_current = self.upload_progress_total;
+                }
+            }
+            AppEvent::UploadError(msg) => {
+                self.home_error = Some(format!("Upload error: {}", msg));
+            }
+            AppEvent::UploadWarning(msg) => {
+                self.upload_warnings.push(msg);
             }
         }
     }
