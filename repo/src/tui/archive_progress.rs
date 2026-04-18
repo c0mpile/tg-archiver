@@ -35,11 +35,13 @@ pub fn draw(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     // Active Status
-    let total = app.state.source_message_count.unwrap_or(0);
+    let total = app.source_message_count.unwrap_or(0);
 
     // We can't really track detailed progress anymore easily without traversing msg ids,
     // so we'll just show the last forwarded msg id.
-    let current_id = app.state.last_forwarded_message_id.unwrap_or(0);
+    let current_id = app.state.channel_pairs[app.active_pair_index]
+        .last_forwarded_message_id
+        .unwrap_or(0);
 
     let info = vec![
         Line::from(vec![

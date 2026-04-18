@@ -6,12 +6,21 @@ use tokio::sync::mpsc;
 
 pub fn start_archive_run(
     state: State,
+    active_pair_index: usize,
     telegram_client: Arc<TelegramClient>,
     tx: mpsc::Sender<AppEvent>,
     pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = run_archive_loop(state, telegram_client, tx.clone(), pause_flag).await {
+        if let Err(e) = run_archive_loop(
+            state,
+            active_pair_index,
+            telegram_client,
+            tx.clone(),
+            pause_flag,
+        )
+        .await
+        {
             let _ = tx.send(AppEvent::ArchiveError(e.to_string())).await;
         } else {
             let _ = tx.send(AppEvent::ArchiveComplete).await;
@@ -21,17 +30,22 @@ pub fn start_archive_run(
 
 async fn run_archive_loop(
     mut state: State,
+    active_pair_index: usize,
     telegram_client: Arc<TelegramClient>,
     tx: mpsc::Sender<AppEvent>,
     pause_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> anyhow::Result<()> {
-    let source_channel_id = state
-        .source_channel_id
-        .ok_or_else(|| anyhow::anyhow!("Source channel not set"))?;
+    if state.channel_pairs.is_empty()
+        || state.channel_pairs[active_pair_index].source_channel_id == 0
+    {
+        anyhow::bail!("Source channel not set");
+    }
+    let source_channel_id = state.channel_pairs[active_pair_index].source_channel_id;
 
-    let dest_group_id = state
-        .dest_group_id
-        .ok_or_else(|| anyhow::anyhow!("Destination group not set"))?;
+    if state.channel_pairs[active_pair_index].dest_group_id == 0 {
+        anyhow::bail!("Destination group not set");
+    }
+    let dest_group_id = state.channel_pairs[active_pair_index].dest_group_id;
 
     let input_peer_source = match telegram_client.get_input_peer(source_channel_id).await {
         Some(peer) => peer,
@@ -58,13 +72,18 @@ async fn run_archive_loop(
     // Check if we need to apply post count threshold
     if state.post_count_threshold > 0 {
         let lowest_allowed = highest_msg_id - (state.post_count_threshold as i32) + 1;
-        if state.last_forwarded_message_id.unwrap_or(0) < lowest_allowed {
-            state.last_forwarded_message_id = Some(lowest_allowed - 1);
+        if state.channel_pairs[active_pair_index]
+            .last_forwarded_message_id
+            .unwrap_or(0)
+            < lowest_allowed
+        {
+            state.channel_pairs[active_pair_index].last_forwarded_message_id =
+                Some(lowest_allowed - 1);
         }
     }
 
     // Determine starting point
-    let start_id = match state.last_forwarded_message_id {
+    let start_id = match state.channel_pairs[active_pair_index].last_forwarded_message_id {
         Some(id) => id + 1,
         None => 1,
     };
@@ -114,13 +133,13 @@ async fn run_archive_loop(
                     &input_peer_source,
                     &input_peer_dest,
                     &valid_msg_ids,
-                    state.dest_topic_id,
+                    state.channel_pairs[active_pair_index].dest_topic_id,
                 )
                 .await?;
         }
 
         // Update state and UI
-        state.last_forwarded_message_id = Some(current_end);
+        state.channel_pairs[active_pair_index].last_forwarded_message_id = Some(current_end);
         let _ = tx.send(AppEvent::SaveCursor(current_end)).await;
 
         // Apply delay between chunks

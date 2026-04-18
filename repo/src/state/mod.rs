@@ -1,25 +1,22 @@
 use tokio::fs;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
+pub struct ChannelPair {
+    pub source_channel_id: i64,
+    pub source_channel_title: String,
+    pub dest_group_id: i64,
+    pub dest_group_title: String,
+    pub dest_topic_id: Option<i32>,
+    pub dest_topic_title: Option<String>,
+    pub last_forwarded_message_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
 pub struct State {
     #[serde(default)]
-    pub source_channel_id: Option<i64>,
-    #[serde(default)]
-    pub source_channel_title: Option<String>,
-    #[serde(default)]
-    pub dest_group_id: Option<i64>,
-    #[serde(default)]
-    pub dest_topic_id: Option<i32>,
-    #[serde(default)]
-    pub dest_group_title: Option<String>,
-    #[serde(default)]
-    pub dest_topic_title: Option<String>,
+    pub channel_pairs: Vec<ChannelPair>,
     #[serde(default)]
     pub post_count_threshold: u32,
-    #[serde(default)]
-    pub last_forwarded_message_id: Option<i32>,
-    #[serde(default)]
-    pub source_message_count: Option<i32>,
     #[serde(default)]
     pub auto_create_topic: bool,
 }
@@ -79,9 +76,16 @@ mod tests {
     fn test_round_trip() {
         let mut state = State::default();
         state.post_count_threshold = 1000;
-        state.last_forwarded_message_id = Some(123);
-        state.source_message_count = Some(150);
         state.auto_create_topic = true;
+        state.channel_pairs.push(ChannelPair {
+            source_channel_id: 123,
+            source_channel_title: "Source".to_string(),
+            dest_group_id: 456,
+            dest_group_title: "Dest".to_string(),
+            dest_topic_id: Some(789),
+            dest_topic_title: Some("Topic".to_string()),
+            last_forwarded_message_id: Some(42),
+        });
 
         let serialized = serde_json::to_string(&state).unwrap();
         let deserialized: State = serde_json::from_str(&serialized).unwrap();
@@ -93,19 +97,17 @@ mod tests {
     fn test_migration_compatibility() {
         let old_json = r#"{
             "source_channel_id": 12345,
-            "filters": {
-                "post_count_threshold": 50
-            },
-            "download_status": {
-                "10": { "status": "Pending" },
-                "11": { "status": "Failed", "reason": "timeout" }
-            }
+            "source_channel_title": "Old Source",
+            "dest_group_id": 67890,
+            "last_forwarded_message_id": 42,
+            "source_message_count": 100,
+            "post_count_threshold": 50,
+            "auto_create_topic": true
         }"#;
 
         let state: State = serde_json::from_str(old_json).unwrap();
-        assert_eq!(state.source_channel_id, Some(12345));
-        assert_eq!(state.post_count_threshold, 0); // Since it was moved out of filters and defaults to 0
-        assert_eq!(state.last_forwarded_message_id, None);
-        assert_eq!(state.auto_create_topic, false);
+        assert_eq!(state.post_count_threshold, 50);
+        assert_eq!(state.auto_create_topic, true);
+        assert!(state.channel_pairs.is_empty());
     }
 }

@@ -87,12 +87,18 @@ pub struct App {
     pub topic_list_state: ratatui::widgets::ListState,
     pub filter_config_state: FilterConfigState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
+    pub active_pair_index: usize,
+    pub source_message_count: Option<i32>,
 }
 
 impl App {
-    pub fn new(config: Config, state: State) -> Self {
-        let has_partial_state =
-            state.last_forwarded_message_id.is_some() && state.source_message_count.is_some();
+    pub fn new(config: Config, mut state: State) -> Self {
+        if state.channel_pairs.is_empty() {
+            state
+                .channel_pairs
+                .push(crate::state::ChannelPair::default());
+        }
+        let has_partial_state = state.channel_pairs[0].last_forwarded_message_id.is_some();
         Self {
             config,
             state,
@@ -114,6 +120,8 @@ impl App {
             topic_list_state: ratatui::widgets::ListState::default(),
             filter_config_state: FilterConfigState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            active_pair_index: 0,
+            source_message_count: None,
         }
     }
 
@@ -171,13 +179,19 @@ impl App {
                         }
                         crossterm::event::KeyCode::Char('s') => {
                             let mut missing = Vec::new();
-                            if self.state.source_channel_id.is_none() {
+                            if self.state.channel_pairs[self.active_pair_index].source_channel_id
+                                == 0
+                            {
                                 missing.push("Source Channel");
                             }
-                            if self.state.dest_group_id.is_none() {
+                            if self.state.channel_pairs[self.active_pair_index].dest_group_id == 0 {
                                 missing.push("Destination Group");
                             }
-                            if self.state.dest_topic_id.is_none() && !self.state.auto_create_topic {
+                            if self.state.channel_pairs[self.active_pair_index]
+                                .dest_topic_id
+                                .is_none()
+                                && !self.state.auto_create_topic
+                            {
                                 missing.push("Destination Topic");
                             }
 
@@ -239,8 +253,10 @@ impl App {
                             if let Some(i) = self.channel_list_state.selected()
                                 && let Some((id, title)) = self.available_channels.get(i)
                             {
-                                self.state.source_channel_id = Some(*id);
-                                self.state.source_channel_title = Some(title.clone());
+                                self.state.channel_pairs[self.active_pair_index]
+                                    .source_channel_id = *id;
+                                self.state.channel_pairs[self.active_pair_index]
+                                    .source_channel_title = title.clone();
                                 let state_clone = self.state.clone();
                                 tokio::spawn(async move {
                                     let _ = state_clone.save().await;
@@ -299,8 +315,10 @@ impl App {
                             if let Some(i) = self.group_list_state.selected()
                                 && let Some((id, title)) = self.available_groups.get(i)
                             {
-                                self.state.dest_group_id = Some(*id);
-                                self.state.dest_group_title = Some(title.clone());
+                                self.state.channel_pairs[self.active_pair_index].dest_group_id =
+                                    *id;
+                                self.state.channel_pairs[self.active_pair_index].dest_group_title =
+                                    title.clone();
                                 let state_clone = self.state.clone();
                                 tokio::spawn(async move {
                                     let _ = state_clone.save().await;
@@ -357,12 +375,16 @@ impl App {
                             if let Some(i) = self.topic_list_state.selected() {
                                 if i == 0 {
                                     // "Create new topic automatically"
-                                    self.state.dest_topic_id = None;
-                                    self.state.dest_topic_title = None;
+                                    self.state.channel_pairs[self.active_pair_index]
+                                        .dest_topic_id = None;
+                                    self.state.channel_pairs[self.active_pair_index]
+                                        .dest_topic_title = None;
                                     self.state.auto_create_topic = true;
                                 } else if let Some((id, title)) = self.available_topics.get(i - 1) {
-                                    self.state.dest_topic_id = Some(*id);
-                                    self.state.dest_topic_title = Some(title.clone());
+                                    self.state.channel_pairs[self.active_pair_index]
+                                        .dest_topic_id = Some(*id);
+                                    self.state.channel_pairs[self.active_pair_index]
+                                        .dest_topic_title = Some(title.clone());
                                     self.state.auto_create_topic = false;
                                 }
 
@@ -558,33 +580,44 @@ impl App {
                 let tg_clone = Arc::clone(telegram);
                 let tx_clone = tx.clone();
                 let paused_clone = Arc::clone(&self.is_paused);
+                let active_idx = self.active_pair_index;
 
-                if let Some(source_id) = self.state.source_channel_id {
-                    let dest_id = self.state.dest_group_id;
+                if self.state.channel_pairs[self.active_pair_index].source_channel_id != 0 {
+                    let source_id =
+                        self.state.channel_pairs[self.active_pair_index].source_channel_id;
+                    let dest_id = self.state.channel_pairs[self.active_pair_index].dest_group_id;
+                    let dest_id_opt = if dest_id == 0 { None } else { Some(dest_id) };
                     tokio::spawn(async move {
                         let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
-                        let dest_missing = match dest_id {
+                        let dest_missing = match dest_id_opt {
                             Some(id) => tg_clone.get_input_peer(id).await.is_none(),
                             None => false,
                         };
 
-                        if source_missing || (dest_id.is_some() && dest_missing) {
+                        if source_missing || (dest_id_opt.is_some() && dest_missing) {
                             let _ = tg_clone.get_joined_channels().await;
                             let _ = tg_clone.get_joined_groups().await;
                         }
 
                         // Handle automatic topic creation
                         if state_clone.auto_create_topic
-                            && let Some(group_id) = state_clone.dest_group_id
+                            && state_clone.channel_pairs[active_idx].dest_group_id != 0
                         {
-                            let topic_title = state_clone
+                            let group_id = state_clone.channel_pairs[active_idx].dest_group_id;
+                            let topic_title = state_clone.channel_pairs[active_idx]
                                 .source_channel_title
-                                .as_deref()
-                                .unwrap_or("Archive");
-                            match tg_clone.create_topic(group_id, topic_title).await {
+                                .clone();
+                            let topic_title_str = if topic_title.is_empty() {
+                                "Archive"
+                            } else {
+                                &topic_title
+                            };
+                            match tg_clone.create_topic(group_id, topic_title_str).await {
                                 Ok(new_topic_id) => {
-                                    state_clone.dest_topic_id = Some(new_topic_id);
-                                    state_clone.dest_topic_title = Some(topic_title.to_string());
+                                    state_clone.channel_pairs[active_idx].dest_topic_id =
+                                        Some(new_topic_id);
+                                    state_clone.channel_pairs[active_idx].dest_topic_title =
+                                        Some(topic_title_str.to_string());
                                     state_clone.auto_create_topic = false;
                                     let s_clone = state_clone.clone();
                                     let _ = s_clone.save().await;
@@ -601,6 +634,7 @@ impl App {
 
                         crate::archive::start_archive_run(
                             state_clone,
+                            active_idx,
                             tg_clone,
                             tx_clone,
                             paused_clone,
@@ -609,7 +643,8 @@ impl App {
                 }
             }
             AppEvent::SaveCursor(cursor) => {
-                self.state.last_forwarded_message_id = Some(cursor);
+                self.state.channel_pairs[self.active_pair_index].last_forwarded_message_id =
+                    Some(cursor);
                 let state_clone = self.state.clone();
                 tokio::spawn(async move {
                     let _ = state_clone.save().await;
@@ -648,22 +683,28 @@ impl App {
                     let tg_clone = Arc::clone(telegram);
                     let tx_clone = tx.clone();
                     let paused_clone = Arc::clone(&self.is_paused);
+                    let active_idx = self.active_pair_index;
 
-                    if let Some(source_id) = self.state.source_channel_id {
-                        let dest_id = self.state.dest_group_id;
+                    if self.state.channel_pairs[self.active_pair_index].source_channel_id != 0 {
+                        let source_id =
+                            self.state.channel_pairs[self.active_pair_index].source_channel_id;
+                        let dest_id =
+                            self.state.channel_pairs[self.active_pair_index].dest_group_id;
+                        let dest_id_opt = if dest_id == 0 { None } else { Some(dest_id) };
                         tokio::spawn(async move {
                             let source_missing = tg_clone.get_input_peer(source_id).await.is_none();
-                            let dest_missing = match dest_id {
+                            let dest_missing = match dest_id_opt {
                                 Some(id) => tg_clone.get_input_peer(id).await.is_none(),
                                 None => false,
                             };
 
-                            if source_missing || (dest_id.is_some() && dest_missing) {
+                            if source_missing || (dest_id_opt.is_some() && dest_missing) {
                                 let _ = tg_clone.get_joined_channels().await;
                                 let _ = tg_clone.get_joined_groups().await;
                             }
                             crate::archive::start_archive_run(
                                 state_clone,
+                                active_idx,
                                 tg_clone,
                                 tx_clone,
                                 paused_clone,
@@ -671,8 +712,8 @@ impl App {
                         });
                     }
                 } else {
-                    self.state.last_forwarded_message_id = None;
-                    self.state.source_message_count = None;
+                    self.state.channel_pairs[self.active_pair_index].last_forwarded_message_id =
+                        None;
                     let state_clone = self.state.clone();
                     tokio::spawn(async move {
                         let _ = state_clone.save().await;

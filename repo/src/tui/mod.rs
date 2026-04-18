@@ -29,13 +29,22 @@ fn render_home(f: &mut Frame, app: &mut App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Blue));
 
-    let channel_text = app
-        .state()
-        .source_channel_title
+    let channel_title = &app.state().channel_pairs[app.active_pair_index].source_channel_title;
+    let channel_text = if channel_title.is_empty() {
+        "None"
+    } else {
+        channel_title
+    };
+    let group_title = &app.state().channel_pairs[app.active_pair_index].dest_group_title;
+    let group_text = if group_title.is_empty() {
+        "None"
+    } else {
+        group_title
+    };
+    let topic_text = app.state().channel_pairs[app.active_pair_index]
+        .dest_topic_title
         .as_deref()
         .unwrap_or("None");
-    let group_text = app.state().dest_group_title.as_deref().unwrap_or("None");
-    let topic_text = app.state().dest_topic_title.as_deref().unwrap_or("None");
 
     let mut lines = vec![
         Line::from("Welcome to tg-archiver shell."),
