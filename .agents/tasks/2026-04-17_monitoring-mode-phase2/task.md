@@ -1,0 +1,31 @@
+# Monitoring Mode Phase 2 Checklist
+
+- [x] `src/state/mod.rs`
+    - Add `poll_interval_secs: u64` with default 300 to `State`.
+    - Provide `fn default_poll_interval() -> u64`.
+- [x] `src/app/mod.rs`
+    - Add `AppEvent::MonitoringTick`.
+    - Add `AppEvent::PairSynced { pair_index: usize, last_forwarded_message_id: i32 }`.
+    - Add `AppEvent::PairError { pair_index: usize, error: String }`.
+    - Add `ActiveView::Monitoring` to `ActiveView`.
+    - Add `next_tick_at: Option<std::time::Instant>` to `App`.
+    - Add `monitoring_cancel_tx: Option<tokio::sync::watch::Sender<bool>>` to `App`.
+    - Implement `handle_event` for new events and keybindings (`m`, `a`, `d`, `s`, `i`, `q` for Monitoring view).
+- [x] `src/archive/mod.rs`
+    - Make `run_archive_loop` pub(crate).
+    - Add `background: bool` to `run_archive_loop`.
+    - Suppress `SaveCursor`, `ArchiveTotalCount` when `background == true`.
+    - Update `start_archive_run` to pass `background: false` to `run_archive_loop`.
+- [x] `src/monitor/mod.rs`
+    - Create new file.
+    - Implement `start_monitoring_loop` using `tokio::time::interval`, `run_archive_loop` inside it, dispatching `AppEvent::PairSynced` / `PairError`.
+- [x] `src/tui/mod.rs`
+    - Expose `monitoring` module.
+    - Dispatch `ActiveView::Monitoring` to `render_monitoring`.
+- [x] `src/tui/monitoring.rs`
+    - Create new file for rendering the monitoring table, interval, countdown, and keys.
+- [x] Verification
+    - `cargo fmt -- --check`
+    - `cargo clippy -- -D warnings`
+    - `cargo build --release`
+    - `cargo test -- --test-threads=1`

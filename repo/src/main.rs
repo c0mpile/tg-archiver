@@ -2,6 +2,7 @@ mod app;
 mod archive;
 pub mod config;
 mod error;
+pub mod monitor;
 pub mod state;
 mod telegram;
 mod tui;

@@ -1,5 +1,9 @@
 use tokio::fs;
 
+fn default_poll_interval() -> u64 {
+    300
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
 pub struct ChannelPair {
     #[serde(default)]
@@ -16,7 +20,7 @@ pub struct ChannelPair {
     pub last_forwarded_message_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct State {
     #[serde(default)]
     pub channel_pairs: Vec<ChannelPair>,
@@ -24,6 +28,19 @@ pub struct State {
     pub post_count_threshold: u32,
     #[serde(default)]
     pub auto_create_topic: bool,
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval_secs: u64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            channel_pairs: Vec::new(),
+            post_count_threshold: 0,
+            auto_create_topic: false,
+            poll_interval_secs: 300,
+        }
+    }
 }
 
 impl State {
@@ -82,6 +99,7 @@ mod tests {
         assert_eq!(ChannelPair::default().source_channel_id, None);
         assert_eq!(ChannelPair::default().dest_group_id, None);
         let mut state = State::default();
+        assert_eq!(state.poll_interval_secs, 300);
         state.post_count_threshold = 1000;
         state.auto_create_topic = true;
         state.channel_pairs.push(ChannelPair {
@@ -113,6 +131,7 @@ mod tests {
         }"#;
 
         let state: State = serde_json::from_str(old_json).unwrap();
+        assert_eq!(state.poll_interval_secs, 300);
         assert_eq!(state.post_count_threshold, 50);
         assert_eq!(state.auto_create_topic, true);
         assert!(state.channel_pairs.is_empty());

@@ -27,6 +27,15 @@ pub enum AppEvent {
     PromptResumeResult(bool),
     TopicCreated(i32, String),
     ArchiveTotalCount(i32),
+    MonitoringTick,
+    PairSynced {
+        pair_index: usize,
+        last_forwarded_message_id: i32,
+    },
+    PairError {
+        pair_index: usize,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -39,6 +48,9 @@ pub enum ActiveView {
     FilterConfig,
     ArchiveProgress,
     ResumePrompt,
+    Monitoring,
+    DeletePairPrompt,
+    IntervalConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -71,6 +83,12 @@ pub struct FilterConfigState {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IntervalConfigState {
+    pub interval_secs: String,
+    pub error_message: Option<String>,
+}
+
 pub struct App {
     #[allow(dead_code)]
     pub config: Config,
@@ -88,9 +106,12 @@ pub struct App {
     pub available_topics: Vec<(i32, String)>,
     pub topic_list_state: ratatui::widgets::ListState,
     pub filter_config_state: FilterConfigState,
+    pub interval_config_state: IntervalConfigState,
     pub is_paused: Arc<std::sync::atomic::AtomicBool>,
     pub active_pair_index: usize,
     pub source_message_count: Option<i32>,
+    pub monitoring_cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub next_tick_at: Option<std::time::Instant>,
 }
 
 impl App {
@@ -121,9 +142,12 @@ impl App {
             available_topics: Vec::new(),
             topic_list_state: ratatui::widgets::ListState::default(),
             filter_config_state: FilterConfigState::default(),
+            interval_config_state: IntervalConfigState::default(),
             is_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             active_pair_index: 0,
             source_message_count: None,
+            monitoring_cancel_tx: None,
+            next_tick_at: None,
         }
     }
 
@@ -178,6 +202,24 @@ impl App {
                                 editing: false,
                                 error_message: None,
                             };
+                        }
+                        crossterm::event::KeyCode::Char('m') => {
+                            self.active_view = ActiveView::Monitoring;
+                            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                            self.monitoring_cancel_tx = Some(cancel_tx);
+                            self.next_tick_at = Some(
+                                std::time::Instant::now()
+                                    + std::time::Duration::from_secs(
+                                        self.state.poll_interval_secs.max(60),
+                                    ),
+                            );
+
+                            crate::monitor::start_monitoring_loop(
+                                self.state.clone(),
+                                Arc::clone(telegram),
+                                tx.clone(),
+                                cancel_rx,
+                            );
                         }
                         crossterm::event::KeyCode::Char('s') => {
                             let mut missing = Vec::new();
@@ -486,6 +528,137 @@ impl App {
                         }
                         _ => {}
                     },
+                    ActiveView::Monitoring => match key.code {
+                        crossterm::event::KeyCode::Char('a') => {
+                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                let _ = tx_cancel.send(true);
+                            }
+                            let new_pair = crate::state::ChannelPair::default();
+                            self.state.channel_pairs.push(new_pair);
+                            self.active_pair_index = self.state.channel_pairs.len() - 1;
+
+                            self.active_view = ActiveView::ChannelSelect;
+                            self.is_loading_channels = true;
+                            self.available_channels.clear();
+                            self.channel_list_state.select(Some(0));
+                            let tg = Arc::clone(telegram);
+                            let tx = tx.clone();
+                            tokio::spawn(async move {
+                                let res = tg.get_joined_channels().await.map_err(|e| e.to_string());
+                                let _ = tx.send(AppEvent::ChannelsLoaded(res)).await;
+                            });
+                        }
+                        crossterm::event::KeyCode::Char('d') => {
+                            if self.state.channel_pairs.len() > 1 {
+                                self.active_view = ActiveView::DeletePairPrompt;
+                            }
+                        }
+                        crossterm::event::KeyCode::Char('s') => {
+                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                let _ = tx_cancel.send(true);
+                            }
+                            let tx = tx.clone();
+                            let _ = tx.try_send(AppEvent::StartArchiveRun);
+                        }
+                        crossterm::event::KeyCode::Char('i') => {
+                            self.active_view = ActiveView::IntervalConfig;
+                            self.interval_config_state = IntervalConfigState {
+                                interval_secs: self.state.poll_interval_secs.to_string(),
+                                error_message: None,
+                            };
+                        }
+                        crossterm::event::KeyCode::Char('q') => {
+                            if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                let _ = tx_cancel.send(true);
+                            }
+                            self.active_view = ActiveView::Home;
+                        }
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if self.active_pair_index < self.state.channel_pairs.len() - 1 {
+                                self.active_pair_index += 1;
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if self.active_pair_index > 0 {
+                                self.active_pair_index -= 1;
+                            }
+                        }
+                        _ => {}
+                    },
+                    ActiveView::DeletePairPrompt => match key.code {
+                        crossterm::event::KeyCode::Char('y')
+                        | crossterm::event::KeyCode::Char('Y')
+                        | crossterm::event::KeyCode::Enter => {
+                            if self.state.channel_pairs.len() > 1 {
+                                self.state.channel_pairs.remove(self.active_pair_index);
+                                if self.active_pair_index >= self.state.channel_pairs.len() {
+                                    self.active_pair_index = self.state.channel_pairs.len() - 1;
+                                }
+                                let state_clone = self.state.clone();
+                                tokio::spawn(async move {
+                                    let _ = state_clone.save().await;
+                                });
+                            }
+                            self.active_view = ActiveView::Monitoring;
+                        }
+                        crossterm::event::KeyCode::Char('n')
+                        | crossterm::event::KeyCode::Char('N')
+                        | crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Monitoring;
+                        }
+                        _ => {}
+                    },
+                    ActiveView::IntervalConfig => match key.code {
+                        crossterm::event::KeyCode::Char(c) if c.is_ascii_digit() => {
+                            self.interval_config_state.error_message = None;
+                            self.interval_config_state.interval_secs.push(c);
+                        }
+                        crossterm::event::KeyCode::Backspace => {
+                            self.interval_config_state.error_message = None;
+                            self.interval_config_state.interval_secs.pop();
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            if let Ok(mut val) =
+                                self.interval_config_state.interval_secs.parse::<u64>()
+                            {
+                                if val < 60 {
+                                    val = 60;
+                                }
+                                self.state.poll_interval_secs = val;
+                                let state_clone = self.state.clone();
+                                tokio::spawn(async move {
+                                    let _ = state_clone.save().await;
+                                });
+                                self.active_view = ActiveView::Monitoring;
+
+                                // Restart monitoring loop to pick up new interval
+                                if let Some(tx_cancel) = self.monitoring_cancel_tx.take() {
+                                    let _ = tx_cancel.send(true);
+                                }
+                                let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                                self.monitoring_cancel_tx = Some(cancel_tx);
+                                self.next_tick_at = Some(
+                                    std::time::Instant::now()
+                                        + std::time::Duration::from_secs(
+                                            self.state.poll_interval_secs.max(60),
+                                        ),
+                                );
+                                crate::monitor::start_monitoring_loop(
+                                    self.state.clone(),
+                                    Arc::clone(telegram),
+                                    tx.clone(),
+                                    cancel_rx,
+                                );
+                            } else {
+                                self.interval_config_state.error_message =
+                                    Some("Must be a number".into());
+                            }
+                        }
+                        crossterm::event::KeyCode::Esc => {
+                            self.active_view = ActiveView::Monitoring;
+                        }
+                        _ => {}
+                    },
                 }
             }
             AppEvent::Tick => {}
@@ -756,6 +929,31 @@ impl App {
             }
             AppEvent::ArchiveTotalCount(n) => {
                 self.source_message_count = Some(n);
+            }
+            AppEvent::MonitoringTick => {
+                self.next_tick_at = Some(
+                    std::time::Instant::now()
+                        + std::time::Duration::from_secs(self.state.poll_interval_secs.max(60)),
+                );
+            }
+            AppEvent::PairSynced {
+                pair_index,
+                last_forwarded_message_id,
+            } => {
+                if pair_index < self.state.channel_pairs.len() {
+                    self.state.channel_pairs[pair_index].last_forwarded_message_id =
+                        Some(last_forwarded_message_id);
+                    let state_clone = self.state.clone();
+                    tokio::spawn(async move {
+                        let _ = state_clone.save().await;
+                    });
+                }
+            }
+            AppEvent::PairError {
+                pair_index: _,
+                error: _,
+            } => {
+                // Could log or show error in UI later
             }
         }
     }

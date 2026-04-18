@@ -9,6 +9,7 @@ use ratatui::{
 
 pub mod archive_progress;
 pub mod filter_config;
+pub mod monitoring;
 
 pub fn render(f: &mut Frame, app: &mut App) {
     match app.active_view {
@@ -19,6 +20,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         ActiveView::FilterConfig => filter_config::render_filter_config(f, app),
         ActiveView::ArchiveProgress => archive_progress::draw(f, app),
         ActiveView::ResumePrompt => render_resume_prompt(f, app),
+        ActiveView::Monitoring => monitoring::render_monitoring(f, app),
+        ActiveView::DeletePairPrompt => monitoring::render_delete_prompt(f, app),
+        ActiveView::IntervalConfig => monitoring::render_interval_config(f, app),
     }
 }
 
@@ -58,6 +62,7 @@ fn render_home(f: &mut Frame, app: &mut App) {
         Line::from("Press '1' to set source channel."),
         Line::from("Press '3' to configure threshold."),
         Line::from("Press 's' to start archive."),
+        Line::from("Press 'm' to enter monitoring mode."),
         Line::from("Press 'q' or Ctrl-C to quit."),
     ];
 

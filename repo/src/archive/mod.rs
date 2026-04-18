@@ -18,6 +18,7 @@ pub fn start_archive_run(
             telegram_client,
             tx.clone(),
             pause_flag,
+            false,
         )
         .await
         {
@@ -28,13 +29,14 @@ pub fn start_archive_run(
     });
 }
 
-async fn run_archive_loop(
+pub(crate) async fn run_archive_loop(
     mut state: State,
     active_pair_index: usize,
     telegram_client: Arc<TelegramClient>,
     tx: mpsc::Sender<AppEvent>,
     pause_flag: Arc<std::sync::atomic::AtomicBool>,
-) -> anyhow::Result<()> {
+    background: bool,
+) -> anyhow::Result<Option<i32>> {
     let pair = state
         .channel_pairs
         .get(active_pair_index)
@@ -70,8 +72,10 @@ async fn run_archive_loop(
         highest_msg_id = msg.id();
     }
 
-    // Send total count to UI
-    let _ = tx.send(AppEvent::ArchiveTotalCount(highest_msg_id)).await;
+    // Send total count to UI only if not in background
+    if !background {
+        let _ = tx.send(AppEvent::ArchiveTotalCount(highest_msg_id)).await;
+    }
 
     // Check if we need to apply post count threshold
     if state.post_count_threshold > 0 {
@@ -93,7 +97,7 @@ async fn run_archive_loop(
     };
 
     if start_id > highest_msg_id {
-        return Ok(()); // Nothing to do
+        return Ok(state.channel_pairs[active_pair_index].last_forwarded_message_id); // Nothing to do
     }
 
     // Step 2: Iterate in chunks of 100
@@ -144,7 +148,9 @@ async fn run_archive_loop(
 
         // Update state and UI
         state.channel_pairs[active_pair_index].last_forwarded_message_id = Some(current_end);
-        let _ = tx.send(AppEvent::SaveCursor(current_end)).await;
+        if !background {
+            let _ = tx.send(AppEvent::SaveCursor(current_end)).await;
+        }
 
         // Apply delay between chunks
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -152,5 +158,5 @@ async fn run_archive_loop(
         current_start = current_end + 1;
     }
 
-    Ok(())
+    Ok(state.channel_pairs[active_pair_index].last_forwarded_message_id)
 }
